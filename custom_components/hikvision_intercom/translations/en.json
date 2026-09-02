@@ -1,0 +1,54 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Hik-Connect account",
+        "description": "Enter the Hik-Connect username and password that owns the intercom. HPP developer API keys are not used for this login.",
+        "data": {
+          "username": "Hik-Connect username or email",
+          "password": "Hik-Connect password"
+        }
+      },
+      "device": {
+        "title": "Select device",
+        "description": "Choose the indoor station or other Hik-Connect device that contains the linked intercom channels.",
+        "data": {"device_serial": "Device"}
+      },
+      "channel": {
+        "title": "Select linked channel",
+        "description": "Choose the linked camera channel to expose as a Home Assistant camera.",
+        "data": {"channel": "Linked camera channel"}
+      }
+    },
+    "error": {
+      "auth": "Hik-Connect rejected the username or password.",
+      "cannot_connect": "Unable to connect to Hik-Connect.",
+      "no_devices": "The account returned no available devices.",
+      "no_channels": "The selected device returned no available linked channels."
+    },
+    "abort": {
+      "already_configured": "This device channel is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Stream options",
+        "description": "Selector 3 is experimental. On the tested station all VTM selectors delivered 640×480; selector 3 carried the largest observed H.264 payload.",
+        "data": {
+          "stream_type": "Cloud VTM selector",
+          "fps": "MJPEG target FPS (0 = source rate)",
+          "jpeg_quality": "JPEG quality (2 = best, 31 = smallest)",
+          "relay_host": "Relay hostname or IP for stream consumers"
+        }
+      }
+    }
+  },
+  "entity": {
+    "camera": {
+      "live": {
+        "name": "Live"
+      }
+    }
+  }
+}

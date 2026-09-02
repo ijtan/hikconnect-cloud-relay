@@ -1,0 +1,11 @@
+{
+  "domain": "hikvision_intercom",
+  "name": "Hikvision Intercom",
+  "codeowners": ["@ijtan"],
+  "config_flow": true,
+  "documentation": "https://github.com/ijtan/hikvision-hacs",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/ijtan/hikvision-hacs/issues",
+  "requirements": ["requests>=2.31.0"],
+  "version": "0.1.0"
+}
