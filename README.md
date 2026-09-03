@@ -125,6 +125,10 @@ remains available if a consumer needs it instead.
 
 ## Current limitations
 
+- There is no native go2rtc integration or WebRTC/RTSP output yet. The
+  integration currently exposes HTTP MJPEG and MPEG-TS endpoints instead.
+- This release is video-only. It does not expose a passive audio listener or
+  implement Hik-Connect two-way audio/call control.
 - The tested intercom delivered a continuous `640×480` cloud feed. The camera
   advertises higher-resolution profiles, but this relay does not claim 720p or
   1080p until the cloud path has been verified at that resolution.
