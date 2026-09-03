@@ -27,19 +27,16 @@ to Home Assistant.
 This is currently a video integration. Microphone audio, two-way talk, door
 controls, and local-device protocols are not included in this release.
 
-## Why another project?
+## Why it exists
 
-Many Hikvision Home Assistant projects assume that the device exposes local
-RTSP, ISAPI, or SDK access. That is not true for every managed two-wire
-intercom installation, even when the Hik-Connect app can display the camera.
+Some Hikvision intercoms expose a linked camera channel through Hik-Connect,
+but do not provide a usable local RTSP, ISAPI, or SDK stream. That means the
+camera can work in the Hik-Connect app while producing no video in Home
+Assistant.
 
-The standalone [`hikcloudstream`](https://github.com/cristianojmiranda/hikcloudstream)
-project now provides a general Python SDK, command-line tools, and browser
-viewers for Hik-Connect cloud cameras. This project focuses on the Home
-Assistant experience around that use case: account setup, device/channel
-selection, a managed long-lived relay, a camera entity, and a stable local URL
-for other Home Assistant services. If you want a general Python library or
-standalone viewer, `hikcloudstream` may be the better fit.
+This integration focuses on that gap: it signs in with the Hik-Connect account,
+finds the linked channel, and keeps the cloud video relay running as a normal
+Home Assistant camera and local stream.
 
 ## Installation
 
