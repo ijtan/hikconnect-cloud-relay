@@ -12,6 +12,10 @@ permissions:
 
 jobs:
   validate-hacs:
+    # HACS reads repository files from raw.githubusercontent.com, which cannot
+    # serve a private repository. This starts running automatically if the repo
+    # is made public.
+    if: github.event.repository.visibility == 'public'
     runs-on: ubuntu-latest
     steps:
       - name: HACS validation
