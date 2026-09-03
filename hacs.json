@@ -1,5 +1,5 @@
 {
   "name": "Hik-Connect Cloud Relay",
-  "render_readme": true,
+  "content_in_root": false,
   "homeassistant": "2024.1.0"
 }

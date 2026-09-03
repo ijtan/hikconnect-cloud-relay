@@ -7,6 +7,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv
 
 from .const import (
     CONF_API_HOST,
@@ -28,6 +29,8 @@ from .media_view import HikvisionMediaView
 from .relay import CloudRelay
 
 _PLATFORMS = [Platform.CAMERA]
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:

@@ -3,6 +3,7 @@
   "name": "Hik-Connect Cloud Relay",
   "codeowners": ["@ijtan"],
   "config_flow": true,
+  "dependencies": ["http"],
   "documentation": "https://github.com/ijtan/hikconnect-cloud-relay",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/ijtan/hikconnect-cloud-relay/issues",
