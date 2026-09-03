@@ -119,12 +119,12 @@ with the Home Assistant config-entry ID.
 
 ## Security and privacy
 
-The Hik-Connect password is stored in Home Assistant's config entry and is not
-included in this repository or written to normal relay statistics. Video is
-relayed through Hik-Connect's cloud service before it reaches Home Assistant.
-Anyone who can reach the unauthenticated media URL can view the selected
-stream, so network isolation or a suitable reverse proxy is required for
-untrusted networks.
+Home Assistant stores the Hik-Connect credentials in the integration's config
+entry. The relay's health and statistics endpoints expose stream state and
+counters only. Video is relayed through Hik-Connect's cloud service before it
+reaches Home Assistant. Anyone who can reach the unauthenticated media URL can
+view the selected stream, so network isolation or a suitable reverse proxy is
+required for untrusted networks.
 
 ## Project status
 
