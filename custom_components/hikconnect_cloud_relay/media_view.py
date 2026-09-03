@@ -15,8 +15,8 @@ from .const import DOMAIN
 class HikvisionMediaView(HomeAssistantView):
     """Serve the relay to HA's stream integration and local FFmpeg clients."""
 
-    url = "/api/hikvision_intercom/{entry_id}/{resource}"
-    name = "api:hikvision_intercom"
+    url = "/api/hikconnect_cloud_relay/{entry_id}/{resource}"
+    name = "api:hikconnect_cloud_relay"
     requires_auth = False
 
     async def get(self, request: web.Request, entry_id: str, resource: str) -> web.StreamResponse:

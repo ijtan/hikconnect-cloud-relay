@@ -62,11 +62,19 @@ button and custom-repository installation to work.
 <details>
 <summary>Manual installation</summary>
 
-1. Copy the `custom_components/hikvision_intercom` directory into the
+1. Copy the `custom_components/hikconnect_cloud_relay` directory into the
    `config/custom_components` directory of Home Assistant.
 2. Restart Home Assistant.
 
 </details>
+
+### Upgrading from an earlier test build
+
+Version 0.1.1 uses the unique Home Assistant domain `hikconnect_cloud_relay`
+instead of the earlier `hikvision_intercom` domain. If you installed an
+earlier test build, remove its `config/custom_components/hikvision_intercom`
+directory and old config entry before installing this version; the domain
+change is not migrated automatically.
 
 During setup, enter the Hik-Connect account that can see the intercom. These
 are the same account credentials used by the Hik-Connect app. HPP Developer
@@ -88,11 +96,11 @@ The camera entity returns its stream source to Home Assistant. The relay also
 provides these local endpoints:
 
 ```text
-http://HOME_ASSISTANT:8123/api/hikvision_intercom/ENTRY_ID/stream.mjpeg
-http://HOME_ASSISTANT:8123/api/hikvision_intercom/ENTRY_ID/stream.ts
-http://HOME_ASSISTANT:8123/api/hikvision_intercom/ENTRY_ID/snapshot.jpg
-http://HOME_ASSISTANT:8123/api/hikvision_intercom/ENTRY_ID/health
-http://HOME_ASSISTANT:8123/api/hikvision_intercom/ENTRY_ID/stats
+http://HOME_ASSISTANT:8123/api/hikconnect_cloud_relay/ENTRY_ID/stream.mjpeg
+http://HOME_ASSISTANT:8123/api/hikconnect_cloud_relay/ENTRY_ID/stream.ts
+http://HOME_ASSISTANT:8123/api/hikconnect_cloud_relay/ENTRY_ID/snapshot.jpg
+http://HOME_ASSISTANT:8123/api/hikconnect_cloud_relay/ENTRY_ID/health
+http://HOME_ASSISTANT:8123/api/hikconnect_cloud_relay/ENTRY_ID/stats
 ```
 
 ## Frigate setup
@@ -107,7 +115,7 @@ cameras:
   front_door:
     ffmpeg:
       inputs:
-        - path: http://homeassistant:8123/api/hikvision_intercom/ENTRY_ID/stream.ts
+        - path: http://homeassistant:8123/api/hikconnect_cloud_relay/ENTRY_ID/stream.ts
           input_args:
             - -f
             - mpegts

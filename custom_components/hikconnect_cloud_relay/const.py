@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-DOMAIN = "hikvision_intercom"
+DOMAIN = "hikconnect_cloud_relay"
 
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"

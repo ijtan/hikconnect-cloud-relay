@@ -11,9 +11,9 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE_NAME = "hikvision_intercom_test"
+PACKAGE_NAME = "hikconnect_cloud_relay_test"
 package = types.ModuleType(PACKAGE_NAME)
-package.__path__ = [str(ROOT / "custom_components" / "hikvision_intercom")]
+package.__path__ = [str(ROOT / "custom_components" / "hikconnect_cloud_relay")]
 sys.modules[PACKAGE_NAME] = package
 
 vtm = importlib.import_module(f"{PACKAGE_NAME}.vtm")

@@ -115,7 +115,7 @@ class HikConnectClient:
         self._session = requests.Session()
         self._session.headers.update(CLIENT_HEADERS)
         self._session.headers["featureCode"] = hashlib.md5(
-            f"hikvision_intercom:{self.username}".encode(), usedforsecurity=False
+            f"hikconnect_cloud_relay:{self.username}".encode(), usedforsecurity=False
         ).hexdigest()[:16]
         self.session_id: str | None = None
         self._rate_limit_lock = threading.Lock()
