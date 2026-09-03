@@ -43,7 +43,7 @@ standalone viewer, `hikcloudstream` may be the better fit.
 
 ## Installation
 
-### HACS
+### HACS (Recommended)
 
 Use the button at the top of this page, or add this repository manually in
 HACS as a custom **Integration** repository. Install it, restart Home
