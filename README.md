@@ -1,76 +1,91 @@
-# Hikvision Intercom
+# Hik-Connect Cloud Relay
 
-A clean Home Assistant custom integration for Hikvision intercoms that are
-visible through a Hik-Connect account.
+[![Open your Home Assistant instance and open this repository in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=ijtan&repository=hikconnect-cloud-relay&category=integration)
 
-This project is intentionally separate from the reverse-engineering lab. The
-first backend uses the Hik-Connect username/password login and the account's
-cloud VTM video route. It does not require local access to the two-wire
-network, and it does not bundle proprietary SDK files.
+A Home Assistant custom integration that turns live video from a Hik-Connect
+intercom into a Home Assistant camera and a stream that other local services
+can consume.
 
-## Current status
+It is intended for installations where the Hik-Connect app can show live video
+but local RTSP, ISAPI, or SDK access is unavailable or impractical. The
+integration signs in with the Hik-Connect account, discovers the available
+devices and linked channels, opens the cloud video route, and relays the video
+to Home Assistant.
 
-The initial implementation provides:
+## What it offers
 
-- a Home Assistant config flow for Hik-Connect username/password;
-- device discovery, followed by linked-channel discovery and selection;
-- one stream-capable camera entity for the selected channel;
-- continuous cloud H.264 relayed to an HA-hosted MJPEG endpoint;
-- selectable VTM profile `1`, `2`, or experimental `3`;
-- configurable MJPEG target FPS and JPEG quality;
-- `/stream.mjpeg`, `/snapshot.jpg`, `/health`, and `/stats` endpoints for
-  dashboards and other local FFmpeg consumers;
-- source-picture, RTP, H.264 NAL, and JPEG counters.
+- A setup wizard for Hik-Connect username and password.
+- Device discovery followed by linked-channel selection.
+- A normal Home Assistant camera entity.
+- A continuous cloud video relay without port forwarding or local device admin
+  access.
+- A Home Assistant-hosted MJPEG stream for dashboards, FFmpeg, and Frigate.
+- Configurable cloud stream selector, output FPS, JPEG quality, and relay host.
+- Snapshot, health, and statistics endpoints for troubleshooting.
+- Automatic reconnect with bounded backoff when the cloud session ends.
 
-The tested station delivers a continuous `640×480` cloud feed. Selector 3
-has carried the largest observed H.264 payload, but is not a proof of 720p or
-1080p. The camera's advertised higher-resolution profile and audio are kept as
-future media-backend work rather than being represented inaccurately here.
+This is currently a video integration. Microphone audio, two-way talk, door
+controls, and local-device protocols are not included in this release.
+
+## Why another project?
+
+Many Hikvision Home Assistant projects assume that the device exposes local
+RTSP, ISAPI, or SDK access. That is not true for every managed two-wire
+intercom installation, even when the Hik-Connect app can display the camera.
+
+The standalone [`hikcloudstream`](https://github.com/cristianojmiranda/hikcloudstream)
+project now provides a general Python SDK, command-line tools, and browser
+viewers for Hik-Connect cloud cameras. This project focuses on the Home
+Assistant experience around that use case: account setup, device/channel
+selection, a managed long-lived relay, a camera entity, and a stable local URL
+for other Home Assistant services. If you want a general Python library or
+standalone viewer, `hikcloudstream` may be the better fit.
 
 ## Installation
 
-For development, copy this repository's `custom_components/hikvision_intercom`
-directory into the Home Assistant `config/custom_components` directory and
-restart Home Assistant. Once the repository is published, it can be added to
-HACS as a custom repository and installed as an integration.
+### HACS
 
-Go to **Settings → Devices & services → Add integration → Hikvision
-Intercom**. Enter the Hik-Connect account that owns or can see the station,
-choose the device, then choose the linked camera channel.
+Use the button at the top of this page, or add this repository manually in
+HACS as a custom **Integration** repository. Install it, restart Home
+Assistant, then go to **Settings → Devices & services → Add integration** and
+choose **Hik-Connect Cloud Relay**.
 
-These are Hik-Connect account credentials. They are not the HPP Developer
-Account API key/secret pair. HPP OpenAPI metadata and HPNetSDK/P2P media will
-be separate backends when their supported interfaces are available.
+The repository must be publicly reachable by Home Assistant/HACS for the
+button and custom-repository installation to work.
 
-## Stream options
+### Manual installation
 
-Open the integration's options after setup:
+Copy the `custom_components/hikvision_intercom` directory into the
+`config/custom_components` directory of Home Assistant and restart Home
+Assistant.
+
+During setup, enter the Hik-Connect account that can see the intercom. These
+are the same account credentials used by the Hik-Connect app. HPP Developer
+Account API keys and secrets are not used, and a local device administrator
+password is not required.
+
+## Stream output
+
+After setup, open the integration's options to choose:
 
 | Option | Meaning |
-|---|---|
-| Cloud VTM selector | `1` main candidate, `2` alternate candidate, `3` experimental high-bitrate candidate |
-| MJPEG target FPS | `0` preserves the source cadence; a positive value asks FFmpeg to rate-limit output |
+| --- | --- |
+| Cloud stream selector | `1` main candidate, `2` alternate candidate, `3` experimental candidate |
+| MJPEG target FPS | `0` keeps the source cadence; a positive value limits output |
 | JPEG quality | `2` is best/largest; `31` is smallest |
-| Relay hostname/IP | Hostname used in the camera's stream source URL, useful when another container must reach Home Assistant |
+| Relay host | Hostname or IP used by external consumers to reach Home Assistant |
 
-The integration registers an endpoint in the Home Assistant HTTP server:
+The camera entity returns its stream source to Home Assistant. The relay also
+provides these local endpoints:
 
 ```text
 http://HOME_ASSISTANT:8123/api/hikvision_intercom/ENTRY_ID/stream.mjpeg
 http://HOME_ASSISTANT:8123/api/hikvision_intercom/ENTRY_ID/snapshot.jpg
+http://HOME_ASSISTANT:8123/api/hikvision_intercom/ENTRY_ID/health
 http://HOME_ASSISTANT:8123/api/hikvision_intercom/ENTRY_ID/stats
 ```
 
-The stream endpoint is deliberately unauthenticated so Home Assistant's
-FFmpeg-based stream consumer and external processes can open it. Keep
-Home Assistant's HTTP port on a trusted network or place it behind suitable
-network access controls. The URL contains an opaque config-entry ID but is not
-a substitute for authentication.
-
-Home Assistant's camera entity returns the MJPEG URL as its stream source, so
-the normal camera dashboard and the `stream` integration can consume it. An
-external process such as Frigate can use the same URL as an FFmpeg input, for
-example:
+For example, a Frigate container can consume the MJPEG endpoint with FFmpeg:
 
 ```yaml
 cameras:
@@ -86,20 +101,37 @@ cameras:
             - record
 ```
 
-Use a Home Assistant hostname reachable from the Frigate container and replace
-`ENTRY_ID` with the config entry ID. The endpoint is MJPEG video only in this
-release; no microphone or talkback path is started implicitly.
+Use a hostname reachable from the consumer container and replace `ENTRY_ID`
+with the Home Assistant config-entry ID.
 
-## Development boundaries
+## Current limitations
 
-The code has no device writes, door-unlock commands, audio-call operations,
-local-port scanning, SDK binaries, private account data, or captured media.
-The media worker uses bounded reconnect backoff and keeps only small per-client
-frame queues so a slow consumer cannot create unbounded latency.
+- The tested intercom delivered a continuous `640×480` cloud feed. The camera
+  advertises higher-resolution profiles, but this relay does not claim 720p or
+  1080p until the cloud path has been verified at that resolution.
+- Video depends on the Hik-Connect cloud service and internet access.
+- The media endpoint is intentionally unauthenticated so HA's stream consumer
+  and services such as Frigate can read it. Keep the Home Assistant HTTP port
+  on a trusted network and do not expose this endpoint directly to the
+  internet.
+- Hik-Connect is an unofficial, undocumented account/API surface and may
+  change without notice.
 
-The next backend boundary is native HPP HPNetSDK/P2P media. HPP API keys and
-secrets are control-plane credentials and should not be entered as the
-Hik-Connect account password in this flow.
+## Security and privacy
+
+The Hik-Connect password is stored in Home Assistant's config entry and is not
+included in this repository or written to normal relay statistics. Video is
+relayed through Hik-Connect's cloud service before it reaches Home Assistant.
+Anyone who can reach the unauthenticated media URL can view the selected
+stream, so network isolation or a suitable reverse proxy is required for
+untrusted networks.
+
+## Project status
+
+This is an unofficial community integration. It is not affiliated with or
+endorsed by Hikvision or Hik-Connect. Issues and hardware reports are welcome,
+especially reports that include the device family, selected stream profile,
+and redacted relay statistics.
 
 ## License
 

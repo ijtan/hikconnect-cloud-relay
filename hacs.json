@@ -1,5 +1,5 @@
 {
-  "name": "Hikvision Intercom",
+  "name": "Hik-Connect Cloud Relay",
   "render_readme": true,
   "homeassistant": "2024.1.0"
 }
