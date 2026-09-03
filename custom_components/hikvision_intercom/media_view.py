@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import queue
+from typing import Any
 
 from aiohttp import web
 from homeassistant.components.http import HomeAssistantView
@@ -43,6 +43,8 @@ class HikvisionMediaView(HomeAssistantView):
                 content_type="image/jpeg",
                 headers={"Cache-Control": "no-store"},
             )
+        if resource == "stream.ts":
+            return await self._stream_mpegts(request, relay)
         if resource != "stream.mjpeg":
             return web.json_response({"error": "not found"}, status=404)
 
@@ -76,4 +78,33 @@ class HikvisionMediaView(HomeAssistantView):
             pass
         finally:
             relay.unsubscribe(client)
+        return response
+
+    async def _stream_mpegts(self, request: web.Request, relay: Any) -> web.StreamResponse:
+        """Serve FFmpeg's source H.264 MPEG-TS output to local consumers."""
+
+        client = relay.subscribe_mpegts()
+        response = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": "video/mp2t",
+                "Cache-Control": "no-store, no-cache, must-revalidate",
+                "Pragma": "no-cache",
+                "Connection": "close",
+            },
+        )
+        try:
+            await response.prepare(request)
+            while True:
+                try:
+                    chunk = await request.app["hass"].async_add_executor_job(client.get, 30.0)
+                except queue.Empty:
+                    if relay.status in {"stopped", "error"}:
+                        break
+                    continue
+                await response.write(chunk)
+        except (asyncio.CancelledError, ConnectionResetError, ConnectionAbortedError):
+            pass
+        finally:
+            relay.unsubscribe_mpegts(client)
         return response

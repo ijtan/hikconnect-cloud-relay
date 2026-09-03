@@ -1,9 +1,10 @@
-"""Cloud VTM to MJPEG relay for Home Assistant and local consumers."""
+"""Cloud VTM to FFmpeg-backed video outputs for Home Assistant and consumers."""
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 import logging
+import os
 import queue
 import shutil
 import subprocess
@@ -145,8 +146,43 @@ class FrameBuffer:
             self.unsubscribe(client)
 
 
+class ChunkBuffer:
+    """Fan out a live byte stream to bounded per-client queues."""
+
+    def __init__(self, max_chunks: int = 32) -> None:
+        self._max_chunks = max_chunks
+        self._lock = threading.Lock()
+        self._clients: set[queue.Queue[bytes]] = set()
+
+    def subscribe(self) -> queue.Queue[bytes]:
+        client: queue.Queue[bytes] = queue.Queue(maxsize=self._max_chunks)
+        with self._lock:
+            self._clients.add(client)
+        return client
+
+    def unsubscribe(self, client: queue.Queue[bytes]) -> None:
+        with self._lock:
+            self._clients.discard(client)
+
+    def publish(self, chunk: bytes) -> None:
+        with self._lock:
+            clients = tuple(self._clients)
+        for client in clients:
+            try:
+                client.put_nowait(chunk)
+            except queue.Full:
+                try:
+                    client.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    client.put_nowait(chunk)
+                except queue.Full:
+                    pass
+
+
 class CloudRelay:
-    """Maintain one reconnecting cloud session and publish MJPEG frames."""
+    """Maintain one reconnecting cloud session and publish video outputs."""
 
     def __init__(
         self,
@@ -168,6 +204,7 @@ class CloudRelay:
         self.fps = fps
         self.jpeg_quality = jpeg_quality
         self.frames = FrameBuffer()
+        self.mpegts = ChunkBuffer()
         self.stop_event = threading.Event()
         self._state_lock = threading.Lock()
         self._status = "starting"
@@ -181,6 +218,8 @@ class CloudRelay:
         self._last_rtp_timestamp: int | None = None
         self._jpeg_frames = 0
         self._jpeg_bytes = 0
+        self._mpegts_chunks = 0
+        self._mpegts_bytes = 0
         self._started_at = time.monotonic()
         self._active_lock = threading.Lock()
         self._active_stream = None
@@ -217,6 +256,12 @@ class CloudRelay:
     def unsubscribe(self, client: queue.Queue[bytes]) -> None:
         self.frames.unsubscribe(client)
 
+    def subscribe_mpegts(self) -> queue.Queue[bytes]:
+        return self.mpegts.subscribe()
+
+    def unsubscribe_mpegts(self, client: queue.Queue[bytes]) -> None:
+        self.mpegts.unsubscribe(client)
+
     def note_rtp(self) -> None:
         with self._metrics_lock:
             self._rtp_packets += 1
@@ -248,6 +293,8 @@ class CloudRelay:
                 "picture_timestamps": self._picture_timestamps,
                 "jpeg_frames": self._jpeg_frames,
                 "jpeg_bytes": self._jpeg_bytes,
+                "mpegts_chunks": self._mpegts_chunks,
+                "mpegts_bytes": self._mpegts_bytes,
             }
         values.update(
             {
@@ -293,6 +340,8 @@ class CloudRelay:
         stream = None
         process: subprocess.Popen[bytes] | None = None
         output_thread: threading.Thread | None = None
+        mpegts_output: BinaryIO | None = None
+        mpegts_thread: threading.Thread | None = None
         try:
             client.login()
             stream = client.open_vtm_stream(
@@ -305,7 +354,7 @@ class CloudRelay:
                 "Hikvision VTM stream up serial=%s channel=%s result=%s",
                 self.serial, self.channel, info.result
             )
-            process = self._start_ffmpeg()
+            process, mpegts_output = self._start_ffmpeg()
             output_thread = threading.Thread(
                 target=self._publish_jpegs,
                 args=(process.stdout,),
@@ -313,6 +362,13 @@ class CloudRelay:
                 daemon=True,
             )
             output_thread.start()
+            mpegts_thread = threading.Thread(
+                target=self._publish_mpegts,
+                args=(mpegts_output,),
+                name="hikvision-vtm-mpegts",
+                daemon=True,
+            )
+            mpegts_thread.start()
             decoder = H264Depacketizer()
             parameter_sets = H264ParameterSetInjector()
             self._set_state("streaming")
@@ -353,14 +409,22 @@ class CloudRelay:
                     process.wait(timeout=3)
                 except subprocess.TimeoutExpired:
                     process.kill()
-                if output_thread is not None:
-                    output_thread.join(timeout=2)
+            if mpegts_output is not None:
+                try:
+                    mpegts_output.close()
+                except OSError:
+                    pass
+            if mpegts_thread is not None:
+                mpegts_thread.join(timeout=2)
+            if output_thread is not None:
+                output_thread.join(timeout=2)
             client.close()
 
-    def _start_ffmpeg(self) -> subprocess.Popen[bytes]:
+    def _start_ffmpeg(self) -> tuple[subprocess.Popen[bytes], BinaryIO]:
         ffmpeg = shutil.which("ffmpeg")
         if not ffmpeg:
             raise RuntimeError("FFmpeg executable was not found")
+        mpegts_read, mpegts_write = os.pipe()
         command = [
             ffmpeg,
             "-hide_banner",
@@ -376,13 +440,48 @@ class CloudRelay:
         ]
         if self.fps > 0:
             command.extend(("-vf", f"fps={self.fps:g}"))
-        command.extend(("-q:v", str(self.jpeg_quality), "-f", "mjpeg", "pipe:1"))
-        return subprocess.Popen(
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+        command.extend(
+            (
+                "-q:v",
+                str(self.jpeg_quality),
+                "-f",
+                "mjpeg",
+                "pipe:1",
+                "-map",
+                "0:v:0",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-tune",
+                "zerolatency",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+                "-f",
+                "mpegts",
+                "-mpegts_flags",
+                "+resend_headers",
+                "-muxdelay",
+                "0.1",
+                f"pipe:{mpegts_write}",
+            )
         )
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                pass_fds=(mpegts_write,),
+            )
+        except BaseException:
+            os.close(mpegts_read)
+            os.close(mpegts_write)
+            raise
+        os.close(mpegts_write)
+        return process, os.fdopen(mpegts_read, "rb")
 
     def _publish_jpegs(self, output: BinaryIO | None) -> None:
         if output is None:
@@ -408,3 +507,15 @@ class CloudRelay:
                 del buffer[: end + 2]
                 self.note_jpeg(len(frame))
                 self.frames.publish(frame)
+
+    def _publish_mpegts(self, output: BinaryIO | None) -> None:
+        if output is None:
+            return
+        while not self.stop_event.is_set():
+            chunk = output.read(188 * 32)
+            if not chunk:
+                return
+            with self._metrics_lock:
+                self._mpegts_chunks += 1
+                self._mpegts_bytes += len(chunk)
+            self.mpegts.publish(chunk)

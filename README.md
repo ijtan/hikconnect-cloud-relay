@@ -24,7 +24,8 @@ other Hikvision intercom kits may work too, but compatibility is not assumed.
 - A normal Home Assistant camera entity.
 - A continuous cloud video relay without port forwarding or local device admin
   access.
-- A Home Assistant-hosted MJPEG stream for dashboards, FFmpeg, and Frigate.
+- A Home Assistant-hosted MJPEG stream for dashboards and browsers.
+- An FFmpeg-generated MPEG-TS/H.264 stream for Frigate and other consumers.
 - Configurable cloud stream selector, output FPS, JPEG quality, and relay host.
 - Snapshot, health, and statistics endpoints for troubleshooting.
 - Automatic reconnect with bounded backoff when the cloud session ends.
@@ -88,6 +89,7 @@ provides these local endpoints:
 
 ```text
 http://HOME_ASSISTANT:8123/api/hikvision_intercom/ENTRY_ID/stream.mjpeg
+http://HOME_ASSISTANT:8123/api/hikvision_intercom/ENTRY_ID/stream.ts
 http://HOME_ASSISTANT:8123/api/hikvision_intercom/ENTRY_ID/snapshot.jpg
 http://HOME_ASSISTANT:8123/api/hikvision_intercom/ENTRY_ID/health
 http://HOME_ASSISTANT:8123/api/hikvision_intercom/ENTRY_ID/stats
@@ -98,24 +100,26 @@ http://HOME_ASSISTANT:8123/api/hikvision_intercom/ENTRY_ID/stats
 <details>
 <summary>Use the relay in Frigate</summary>
 
-A Frigate container can consume the MJPEG endpoint with FFmpeg:
+A Frigate container can consume the MPEG-TS/H.264 endpoint with FFmpeg:
 
 ```yaml
 cameras:
   front_door:
     ffmpeg:
       inputs:
-        - path: http://homeassistant:8123/api/hikvision_intercom/ENTRY_ID/stream.mjpeg
+        - path: http://homeassistant:8123/api/hikvision_intercom/ENTRY_ID/stream.ts
           input_args:
             - -f
-            - mjpeg
+            - mpegts
           roles:
             - detect
             - record
 ```
 
 Use a hostname reachable from the consumer container and replace `ENTRY_ID`
-with the Home Assistant config-entry ID.
+with the Home Assistant config-entry ID. The MPEG-TS endpoint is FFmpeg
+transcoded H.264 and currently contains no audio track. The MJPEG endpoint
+remains available if a consumer needs it instead.
 
 </details>
 
@@ -131,6 +135,8 @@ with the Home Assistant config-entry ID.
   internet.
 - Hik-Connect is an unofficial, undocumented account/API surface and may
   change without notice.
+- The relay host needs an FFmpeg executable. Home Assistant OS and the Home
+  Assistant Container include FFmpeg; other installations need to provide it.
 
 ## Security and privacy
 

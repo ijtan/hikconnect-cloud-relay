@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
+import queue
 import sys
 import types
 import unittest
@@ -62,6 +63,20 @@ class ProtocolTests(unittest.TestCase):
         )
         self.assertFalse(inactive.linked)
         self.assertTrue(active.linked)
+
+    def test_chunk_buffer_drops_oldest_data_for_slow_clients(self) -> None:
+        buffer = relay.ChunkBuffer(max_chunks=2)
+        client = buffer.subscribe()
+        try:
+            buffer.publish(b"one")
+            buffer.publish(b"two")
+            buffer.publish(b"three")
+            self.assertEqual(client.get_nowait(), b"two")
+            self.assertEqual(client.get_nowait(), b"three")
+            with self.assertRaises(queue.Empty):
+                client.get_nowait()
+        finally:
+            buffer.unsubscribe(client)
 
 
 if __name__ == "__main__":
