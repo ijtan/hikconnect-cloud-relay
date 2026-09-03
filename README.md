@@ -12,10 +12,10 @@ integration signs in with the Hik-Connect account, discovers the available
 devices and linked channels, opens the cloud video route, and relays the video
 to Home Assistant.
 
-Initial development and testing used the Hikvision **DS-KIS703Y-P** kit:
+This integration has been tested on the Hikvision **DS-KIS703Y-P** kit:
 the **DS-KV8103Y-IMPE2** door station and **DS-KH6320Y-WTPE2** indoor
-station. The integration works with the linked Hik-Connect channel, so other
-Hikvision intercom kits may work too, but compatibility is not assumed.
+station. It works with the linked Hik-Connect channel on that installation;
+other Hikvision intercom kits may work too, but compatibility is not assumed.
 
 ## What it offers
 
