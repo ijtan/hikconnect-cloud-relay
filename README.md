@@ -77,9 +77,8 @@ directory and old config entry before installing this version; the domain
 change is not migrated automatically.
 
 During setup, enter the Hik-Connect account that can see the intercom. These
-are the same account credentials used by the Hik-Connect app. HPP Developer
-Account API keys and secrets are not used, and a local device administrator
-password is not required.
+are the same account credentials used by the Hik-Connect app. A local device
+administrator password is not required.
 
 ## Stream output
 
