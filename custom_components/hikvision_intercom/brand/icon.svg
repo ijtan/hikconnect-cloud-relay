@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="relay" x1="28" y1="28" x2="228" y2="228" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#44739e"/>
+      <stop offset="1" stop-color="#2f9ec4"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#relay)" d="M63 198a45 45 0 0 1-8-89 63 63 0 0 1 121-13 40 40 0 0 1 17 76H63Z"/>
+  <rect width="126" height="88" x="65" y="91" fill="#fff" rx="18"/>
+  <path fill="#44739e" d="m92 110 50 25-50 25v-50Z"/>
+  <circle cx="164" cy="135" r="14" fill="#2f9ec4"/>
+</svg>

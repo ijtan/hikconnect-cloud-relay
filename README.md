@@ -47,19 +47,25 @@ Home Assistant camera and local stream.
 
 ### HACS (Recommended)
 
-Use the button at the top of this page, or add this repository manually in
-HACS as a custom **Integration** repository. Install it, restart Home
-Assistant, then go to **Settings → Devices & services → Add integration** and
-choose **Hik-Connect Cloud Relay**.
+1. Select the **Open in HACS** button at the top of this page.
+2. If it is not listed yet, add this repository manually in HACS as a custom
+   **Integration** repository.
+3. Install **Hik-Connect Cloud Relay**.
+4. Restart Home Assistant.
+5. Go to **Settings → Devices & services → Add integration** and choose
+   **Hik-Connect Cloud Relay**.
 
 The repository must be publicly reachable by Home Assistant/HACS for the
 button and custom-repository installation to work.
 
-### Manual installation
+<details>
+<summary>Manual installation</summary>
 
-Copy the `custom_components/hikvision_intercom` directory into the
-`config/custom_components` directory of Home Assistant and restart Home
-Assistant.
+1. Copy the `custom_components/hikvision_intercom` directory into the
+   `config/custom_components` directory of Home Assistant.
+2. Restart Home Assistant.
+
+</details>
 
 During setup, enter the Hik-Connect account that can see the intercom. These
 are the same account credentials used by the Hik-Connect app. HPP Developer
@@ -87,7 +93,12 @@ http://HOME_ASSISTANT:8123/api/hikvision_intercom/ENTRY_ID/health
 http://HOME_ASSISTANT:8123/api/hikvision_intercom/ENTRY_ID/stats
 ```
 
-For example, a Frigate container can consume the MJPEG endpoint with FFmpeg:
+## Frigate setup
+
+<details>
+<summary>Use the relay in Frigate</summary>
+
+A Frigate container can consume the MJPEG endpoint with FFmpeg:
 
 ```yaml
 cameras:
@@ -105,6 +116,8 @@ cameras:
 
 Use a hostname reachable from the consumer container and replace `ENTRY_ID`
 with the Home Assistant config-entry ID.
+
+</details>
 
 ## Current limitations
 
