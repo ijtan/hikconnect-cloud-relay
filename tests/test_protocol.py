@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 import queue
+from unittest.mock import patch
 import sys
 import types
 import unittest
@@ -77,6 +78,32 @@ class ProtocolTests(unittest.TestCase):
                 client.get_nowait()
         finally:
             buffer.unsubscribe(client)
+
+    def test_ffmpeg_mpegts_output_repeats_h264_headers(self) -> None:
+        cloud_relay = relay.CloudRelay(
+            username="user",
+            password="password",
+            api_host="https://api.example.test",
+            serial="station",
+            channel=1,
+            stream_type=1,
+            fps=0,
+            jpeg_quality=5,
+        )
+        process = types.SimpleNamespace(
+            stdin=None,
+            stdout=None,
+            poll=lambda: 0,
+        )
+        with patch.object(relay.shutil, "which", return_value="ffmpeg"), patch.object(
+            relay.subprocess, "Popen", return_value=process
+        ) as popen:
+            _, output = cloud_relay._start_ffmpeg()
+            try:
+                command = popen.call_args.args[0]
+                self.assertIn("repeat-headers=1", command)
+            finally:
+                output.close()
 
 
 if __name__ == "__main__":

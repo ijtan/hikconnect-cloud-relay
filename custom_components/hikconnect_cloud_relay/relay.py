@@ -459,6 +459,8 @@ class CloudRelay:
                 "18",
                 "-pix_fmt",
                 "yuv420p",
+                "-x264-params",
+                "repeat-headers=1",
                 "-f",
                 "mpegts",
                 "-mpegts_flags",
