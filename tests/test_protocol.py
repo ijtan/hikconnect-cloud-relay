@@ -102,6 +102,9 @@ class ProtocolTests(unittest.TestCase):
             try:
                 command = popen.call_args.args[0]
                 self.assertIn("repeat-headers=1", command)
+                self.assertIn("expr:gte(t,n_forced*2)", command)
+                self.assertIn("50", command)
+                self.assertIn("+resend_headers+pat_pmt_at_frames", command)
             finally:
                 output.close()
 

@@ -126,8 +126,9 @@ cameras:
 Use a hostname reachable from the consumer container and replace `ENTRY_ID`
 with the Home Assistant config-entry ID. The MPEG-TS endpoint is FFmpeg-
 transcoded H.264 and currently contains no audio track. H.264 parameter sets
-are repeated at keyframes so consumers that join an already-running relay can
-begin decoding without waiting for the relay or Home Assistant to restart.
+are repeated at forced two-second keyframes so consumers that join an
+already-running relay can begin decoding without waiting for the relay or Home
+Assistant to restart.
 The MJPEG endpoint remains available if a consumer needs it instead.
 
 </details>
