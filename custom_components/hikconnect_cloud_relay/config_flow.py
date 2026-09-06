@@ -211,9 +211,5 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     CONF_RELAY_HOST,
                     default=current.get(CONF_RELAY_HOST, DEFAULT_RELAY_HOST),
                 ): str,
-                vol.Required(
-                    CONF_RTSP_PUBLISH_URL,
-                    default=current.get(CONF_RTSP_PUBLISH_URL, DEFAULT_RTSP_PUBLISH_URL),
-                ): str,
             }
         )
