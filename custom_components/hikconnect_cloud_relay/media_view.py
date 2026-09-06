@@ -40,7 +40,7 @@ class HikvisionMediaView(HomeAssistantView):
         if resource == "health":
             payload = relay.stats()
             return web.json_response(
-                payload, status=200 if payload["status"] == "streaming" else 503
+                payload, status=200 if payload["healthy"] else 503
             )
         if resource == "snapshot.jpg":
             try:

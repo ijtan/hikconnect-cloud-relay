@@ -157,6 +157,25 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(cloud_relay.legacy_outputs_enabled)
         self.assertTrue(cloud_relay.rtsp_enabled)
 
+    def test_rtsp_health_requires_publisher_ready(self) -> None:
+        cloud_relay = relay.CloudRelay(
+            username="user",
+            password="password",
+            api_host="https://api.example.test",
+            serial="station",
+            channel=1,
+            stream_type=1,
+            fps=0,
+            jpeg_quality=5,
+            output_mode="rtsp",
+            rtsp_publish_url="rtsp://127.0.0.1:8554/hikconnect/station_1",
+        )
+        cloud_relay._set_state("streaming")
+        self.assertFalse(cloud_relay.healthy)
+        assert cloud_relay._rtsp is not None
+        cloud_relay._rtsp._set_status("streaming")
+        self.assertTrue(cloud_relay.healthy)
+
     def test_copy_gate_waits_for_parameter_sets_and_idr(self) -> None:
         gate = rtsp.H264CopyGate()
         sps, pps, idr, pframe = b"\x67sps", b"\x68pps", b"\x65idr", b"\x41p"

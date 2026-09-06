@@ -310,6 +310,18 @@ class CloudRelay:
     def rtsp_enabled(self) -> bool:
         return self._rtsp is not None
 
+    @property
+    def healthy(self) -> bool:
+        """Return whether the configured output path is ready for consumers."""
+
+        if self.status != "streaming":
+            return False
+        if self._rtsp is not None and self._rtsp.status != "streaming":
+            return False
+        if self._rtsp_server is not None and self._rtsp_server.status != "running":
+            return False
+        return True
+
     def note_rtp(self) -> None:
         with self._metrics_lock:
             self._rtp_packets += 1
@@ -347,6 +359,7 @@ class CloudRelay:
         values.update(
             {
                 "status": status,
+                "healthy": self.healthy,
                 "error": error,
                 "serial": self.serial,
                 "channel": self.channel,
