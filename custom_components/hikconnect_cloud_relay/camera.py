@@ -85,8 +85,6 @@ class HikvisionIntercomCamera(Camera):
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
-        if not self._runtime["relay"].legacy_outputs_enabled:
-            return None
         try:
             return await self.hass.async_add_executor_job(self._runtime["relay"].snapshot, 15.0)
         except queue.Empty:

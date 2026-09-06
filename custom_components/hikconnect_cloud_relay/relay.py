@@ -441,6 +441,15 @@ class CloudRelay:
                     daemon=True,
                 )
                 mpegts_thread.start()
+            elif self._rtsp is not None:
+                process = self._start_preview_ffmpeg()
+                output_thread = threading.Thread(
+                    target=self._publish_jpegs,
+                    args=(process.stdout,),
+                    name="hikvision-vtm-preview",
+                    daemon=True,
+                )
+                output_thread.start()
             decoder = H264Depacketizer()
             parameter_sets = H264ParameterSetInjector()
             self._set_state("streaming")
@@ -565,6 +574,39 @@ class CloudRelay:
             raise
         os.close(mpegts_write)
         return process, os.fdopen(mpegts_read, "rb")
+
+    def _start_preview_ffmpeg(self) -> subprocess.Popen[bytes]:
+        """Decode one JPEG per second for Home Assistant camera previews."""
+
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            raise RuntimeError("FFmpeg executable was not found")
+        command = [
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-fflags",
+            "+genpts",
+            "-f",
+            "h264",
+            "-i",
+            "pipe:0",
+            "-an",
+            "-vf",
+            "fps=1",
+            "-q:v",
+            "5",
+            "-f",
+            "mjpeg",
+            "pipe:1",
+        ]
+        return subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
 
     def _publish_jpegs(self, output: BinaryIO | None) -> None:
         if output is None:
