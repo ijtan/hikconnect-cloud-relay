@@ -24,7 +24,8 @@
       "auth": "Hik-Connect rejected the username or password.",
       "cannot_connect": "Unable to connect to Hik-Connect.",
       "no_devices": "The account returned no available devices.",
-      "no_channels": "The selected device returned no available linked channels."
+      "no_channels": "The selected device returned no available linked channels.",
+      "invalid_rtsp_url": "Enter a valid RTSP URL without embedded credentials, or leave it blank to disable RTSP."
     },
     "abort": {
       "already_configured": "This device channel is already configured."
@@ -34,12 +35,13 @@
     "step": {
       "init": {
         "title": "Stream options",
-        "description": "Selector 3 is experimental. On the tested station all VTM selectors delivered 640×480; selector 3 carried the largest observed H.264 payload.",
+        "description": "Selector 3 is experimental. On the tested station all VTM selectors delivered 640×480; selector 3 carried the largest observed H.264 payload. The optional RTSP publisher requires an external RTSP server such as MediaMTX.",
         "data": {
           "stream_type": "Cloud VTM selector",
           "fps": "MJPEG target FPS (0 = source rate)",
           "jpeg_quality": "JPEG quality (2 = best, 31 = smallest)",
-          "relay_host": "Relay hostname or IP for stream consumers"
+          "relay_host": "Relay hostname or IP for stream consumers",
+          "rtsp_publish_url": "Optional RTSP copy-mode publish URL"
         }
       }
     }

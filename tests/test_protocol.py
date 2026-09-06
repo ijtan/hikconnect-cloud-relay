@@ -19,6 +19,7 @@ sys.modules[PACKAGE_NAME] = package
 
 vtm = importlib.import_module(f"{PACKAGE_NAME}.vtm")
 relay = importlib.import_module(f"{PACKAGE_NAME}.relay")
+rtsp = importlib.import_module(f"{PACKAGE_NAME}.rtsp")
 cloud = importlib.import_module(f"{PACKAGE_NAME}.cloud")
 
 
@@ -107,6 +108,47 @@ class ProtocolTests(unittest.TestCase):
                 self.assertIn("+resend_headers+pat_pmt_at_frames", command)
             finally:
                 output.close()
+
+    def test_rtsp_copy_command_does_not_encode(self) -> None:
+        command = rtsp.build_rtsp_copy_command(
+            "/usr/bin/ffmpeg", "rtsp://127.0.0.1:8554/hikconnect/test"
+        )
+        self.assertIn("-c:v", command)
+        self.assertIn("copy", command)
+        self.assertIn("-rtsp_transport", command)
+        self.assertIn("tcp", command)
+        self.assertNotIn("libx264", command)
+        self.assertNotIn("-vf", command)
+        self.assertNotIn("mpegts", command)
+
+    def test_rtsp_url_validation_rejects_credentials(self) -> None:
+        self.assertEqual(
+            rtsp.validate_rtsp_publish_url(" rtsp://127.0.0.1:8554/hikconnect/test "),
+            "rtsp://127.0.0.1:8554/hikconnect/test",
+        )
+        with self.assertRaises(ValueError):
+            rtsp.validate_rtsp_publish_url("rtsp://user:pass@127.0.0.1:8554/test")
+
+    def test_copy_gate_waits_for_parameter_sets_and_idr(self) -> None:
+        gate = rtsp.H264CopyGate()
+        sps, pps, idr, pframe = b"\x67sps", b"\x68pps", b"\x65idr", b"\x41p"
+        self.assertEqual(gate.feed([pframe]), [])
+        self.assertEqual(gate.feed([sps, pps, pframe]), [])
+        self.assertEqual(gate.feed([idr]), [sps, pps, idr])
+        self.assertTrue(gate.ready)
+        self.assertEqual(gate.feed([pframe]), [pframe])
+        gate.reset(clear_parameter_sets=False)
+        self.assertEqual(gate.feed([pframe]), [])
+        self.assertEqual(gate.feed([idr]), [sps, pps, idr])
+
+    def test_rtsp_queue_overflow_requires_resync(self) -> None:
+        publisher = rtsp.RtspCopyPublisher(
+            "rtsp://127.0.0.1:8554/hikconnect/test", max_queue_bytes=8
+        )
+        publisher.submit([b"\x67sps", b"\x68pps", b"\x65idr"])
+        stats = publisher.stats()
+        self.assertEqual(stats["dropped_chunks"], 1)
+        self.assertEqual(stats["queued_bytes"], 0)
 
 
 if __name__ == "__main__":

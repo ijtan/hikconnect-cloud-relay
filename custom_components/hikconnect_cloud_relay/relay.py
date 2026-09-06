@@ -13,6 +13,7 @@ import time
 from typing import BinaryIO
 
 from .cloud import HikConnectClient
+from .rtsp import RtspCopyPublisher
 from .vtm import rtp_payload, rtp_timestamp
 
 _LOGGER = logging.getLogger(__name__)
@@ -194,6 +195,7 @@ class CloudRelay:
         stream_type: int,
         fps: float,
         jpeg_quality: int,
+        rtsp_publish_url: str = "",
     ) -> None:
         self.username = username
         self.password = password
@@ -203,6 +205,9 @@ class CloudRelay:
         self.stream_type = stream_type
         self.fps = fps
         self.jpeg_quality = jpeg_quality
+        self._rtsp = (
+            RtspCopyPublisher(rtsp_publish_url) if rtsp_publish_url.strip() else None
+        )
         self.frames = FrameBuffer()
         self.mpegts = ChunkBuffer()
         self.stop_event = threading.Event()
@@ -236,6 +241,8 @@ class CloudRelay:
             self._error = error
 
     def start(self) -> None:
+        if self._rtsp is not None:
+            self._rtsp.start()
         self._thread.start()
 
     def stop(self) -> None:
@@ -245,6 +252,8 @@ class CloudRelay:
         if stream is not None:
             stream.close()
         self._thread.join(timeout=12)
+        if self._rtsp is not None:
+            self._rtsp.stop()
         self._set_state("stopped")
 
     def snapshot(self, timeout: float = 15.0) -> bytes:
@@ -310,6 +319,18 @@ class CloudRelay:
                 "retry_in_seconds": round(max(0.0, self._next_retry_at - time.monotonic()), 1),
             }
         )
+        rtsp_stats = self._rtsp.stats() if self._rtsp is not None else None
+        values.update(
+            {
+                "rtsp_enabled": rtsp_stats is not None,
+                "rtsp_status": rtsp_stats["status"] if rtsp_stats else "disabled",
+                "rtsp_restarts": rtsp_stats["restarts"] if rtsp_stats else 0,
+                "rtsp_dropped_chunks": rtsp_stats["dropped_chunks"] if rtsp_stats else 0,
+                "rtsp_dropped_bytes": rtsp_stats["dropped_bytes"] if rtsp_stats else 0,
+                "rtsp_queued_bytes": rtsp_stats["queued_bytes"] if rtsp_stats else 0,
+                "rtsp_last_error": rtsp_stats["last_error"] if rtsp_stats else None,
+            }
+        )
         return values
 
     def _run(self) -> None:
@@ -336,6 +357,8 @@ class CloudRelay:
             self._set_state("reconnecting")
 
     def _run_once(self) -> None:
+        if self._rtsp is not None:
+            self._rtsp.reset()
         client = HikConnectClient(self.username, self.password, self.api_host)
         stream = None
         process: subprocess.Popen[bytes] | None = None
@@ -387,6 +410,8 @@ class CloudRelay:
                 self.note_picture_timestamp(rtp_timestamp(packet.body))
                 nals = list(decoder.feed(payload))
                 self.note_nals(len(nals))
+                if self._rtsp is not None and nals:
+                    self._rtsp.submit(nals)
                 for nal in parameter_sets.feed(nals):
                     stdin.write(b"\x00\x00\x00\x01" + nal)
                 if nals:
@@ -419,6 +444,8 @@ class CloudRelay:
             if output_thread is not None:
                 output_thread.join(timeout=2)
             client.close()
+            if self._rtsp is not None:
+                self._rtsp.reset()
 
     def _start_ffmpeg(self) -> tuple[subprocess.Popen[bytes], BinaryIO]:
         ffmpeg = shutil.which("ffmpeg")

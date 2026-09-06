@@ -26,6 +26,7 @@ other Hikvision intercom kits may work too, but compatibility is not assumed.
   access.
 - A Home Assistant-hosted MJPEG stream for dashboards and browsers.
 - An FFmpeg-generated MPEG-TS/H.264 stream for Frigate and other consumers.
+- An optional RTSP/H.264 copy-mode publisher for Frigate and other consumers.
 - Configurable cloud stream selector, output FPS, JPEG quality, and relay host.
 - Snapshot, health, and statistics endpoints for troubleshooting.
 - Automatic reconnect with bounded backoff when the cloud session ends.
@@ -90,6 +91,7 @@ After setup, open the integration's options to choose:
 | MJPEG target FPS | `0` keeps the source cadence; a positive value limits output |
 | JPEG quality | `2` is best/largest; `31` is smallest |
 | Relay host | Hostname or IP used by external consumers to reach Home Assistant |
+| RTSP publish URL | Optional `rtsp://` URL for an external RTSP server; blank disables it |
 
 The camera entity returns its stream source to Home Assistant. The relay also
 provides these local endpoints:
@@ -102,12 +104,42 @@ http://HOME_ASSISTANT:8123/api/hikconnect_cloud_relay/ENTRY_ID/health
 http://HOME_ASSISTANT:8123/api/hikconnect_cloud_relay/ENTRY_ID/stats
 ```
 
+### Optional RTSP copy-mode output
+
+The integration can publish the original H.264 access units to an external
+RTSP server such as MediaMTX. It is an RTSP publisher, not an RTSP server. The
+cloud session, channel discovery, keepalives, and reconnect logic remain in
+this integration, while the RTSP publisher runs independently beside the
+existing MJPEG and MPEG-TS outputs.
+
+Configure a URL such as:
+
+```text
+rtsp://127.0.0.1:8554/hikconnect/ENTRY_ID
+```
+
+The URL is used by an FFmpeg process with `-c:v copy`, TCP transport, and no
+audio. It must not contain credentials because process arguments can be
+visible to other local users. Use a trusted bind address, firewall rules, or
+the RTSP server's own authentication configuration instead.
+
+The publisher waits for SPS, PPS, and an IDR frame before sending a new
+connection. It preserves the source GOP and cannot create new keyframes. A
+publisher failure does not stop the Hik-Connect session or the legacy HTTP
+outputs. After the cloud source reconnects, the publisher starts at a fresh
+decodable keyframe.
+
+A minimal MediaMTX configuration is provided in
+[`examples/mediamtx.yml`](examples/mediamtx.yml). The relay host and RTSP
+server may be the same machine. If they are different, use the relay's local
+publish URL and the server's reachable address for Frigate readers.
+
 ## Frigate setup
 
 <details>
 <summary>Use the relay in Frigate</summary>
 
-A Frigate container can consume the MPEG-TS/H.264 endpoint with FFmpeg:
+A Frigate container can consume the legacy MPEG-TS/H.264 endpoint with FFmpeg:
 
 ```yaml
 cameras:
@@ -131,12 +163,37 @@ already-running relay can begin decoding without waiting for the relay or Home
 Assistant to restart.
 The MJPEG endpoint remains available if a consumer needs it instead.
 
+For the optional RTSP output, keep the camera definition stable and change
+only the go2rtc source:
+
+```yaml
+go2rtc:
+  streams:
+    front_door:
+      - rtsp://homeassistant:8554/hikconnect/ENTRY_ID
+
+cameras:
+  front_door:
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/front_door
+          input_args: preset-rtsp-restream
+          roles:
+            - detect
+            - record
+```
+
+Frigate records the H.264 stream without re-encoding and decodes a separate
+detection branch. Copy mode preserves the source quality and keyframe
+cadence; it does not repair a damaged cloud stream or force exact segment
+boundaries.
+
 </details>
 
 ## Current limitations
 
-- There is no native go2rtc integration or WebRTC/RTSP output yet. The
-  integration currently exposes HTTP MJPEG and MPEG-TS endpoints instead.
+- RTSP publishing requires an external RTSP server such as MediaMTX; the
+  integration does not embed an RTSP server.
 - This release is video-only. It does not expose a passive audio listener or
   implement Hik-Connect two-way audio/call control.
 - The tested intercom delivered a continuous `640×480` cloud feed. The camera

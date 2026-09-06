@@ -21,18 +21,21 @@ from .const import (
     CONF_JPEG_QUALITY,
     CONF_PASSWORD,
     CONF_RELAY_HOST,
+    CONF_RTSP_PUBLISH_URL,
     CONF_STREAM_TYPE,
     CONF_USERNAME,
     DEFAULT_API_HOST,
     DEFAULT_FPS,
     DEFAULT_JPEG_QUALITY,
     DEFAULT_RELAY_HOST,
+    DEFAULT_RTSP_PUBLISH_URL,
     DEFAULT_STREAM_TYPE,
     DOMAIN,
     MAX_JPEG_QUALITY,
     MIN_JPEG_QUALITY,
     STREAM_TYPES,
 )
+from .rtsp import validate_rtsp_publish_url
 
 USER_SCHEMA = vol.Schema(
     {
@@ -167,9 +170,24 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         if user_input is not None:
+            try:
+                user_input[CONF_RTSP_PUBLISH_URL] = validate_rtsp_publish_url(
+                    user_input.get(CONF_RTSP_PUBLISH_URL)
+                )
+            except ValueError:
+                return self.async_show_form(
+                    step_id="init",
+                    data_schema=self._schema(self.config_entry.options),
+                    errors={"base": "invalid_rtsp_url"},
+                )
             return self.async_create_entry(title="", data=user_input)
-        current = self.config_entry.options
-        schema = vol.Schema(
+        return self.async_show_form(
+            step_id="init", data_schema=self._schema(self.config_entry.options)
+        )
+
+    @staticmethod
+    def _schema(current: dict[str, Any]) -> vol.Schema:
+        return vol.Schema(
             {
                 vol.Required(
                     CONF_STREAM_TYPE,
@@ -189,6 +207,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     CONF_RELAY_HOST,
                     default=current.get(CONF_RELAY_HOST, DEFAULT_RELAY_HOST),
                 ): str,
+                vol.Required(
+                    CONF_RTSP_PUBLISH_URL,
+                    default=current.get(CONF_RTSP_PUBLISH_URL, DEFAULT_RTSP_PUBLISH_URL),
+                ): str,
             }
         )
-        return self.async_show_form(step_id="init", data_schema=schema)

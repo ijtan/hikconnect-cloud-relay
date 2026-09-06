@@ -16,12 +16,14 @@ CONF_STREAM_TYPE = "stream_type"
 CONF_FPS = "fps"
 CONF_JPEG_QUALITY = "jpeg_quality"
 CONF_RELAY_HOST = "relay_host"
+CONF_RTSP_PUBLISH_URL = "rtsp_publish_url"
 
 DEFAULT_API_HOST = "https://api.hik-connect.com"
 DEFAULT_STREAM_TYPE = 1
 DEFAULT_FPS = 0.0
 DEFAULT_JPEG_QUALITY = 5
 DEFAULT_RELAY_HOST = "127.0.0.1"
+DEFAULT_RTSP_PUBLISH_URL = ""
 
 STREAM_TYPES = (1, 2, 3)
 MIN_JPEG_QUALITY = 2

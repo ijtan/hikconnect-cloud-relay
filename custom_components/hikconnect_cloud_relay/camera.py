@@ -71,6 +71,9 @@ class HikvisionIntercomCamera(Camera):
             "stream_type": stats["stream_type"],
             "source_picture_timestamps": stats["picture_timestamps"],
             "jpeg_frames": stats["jpeg_frames"],
+            "rtsp_enabled": stats["rtsp_enabled"],
+            "rtsp_status": stats["rtsp_status"],
+            "rtsp_restarts": stats["rtsp_restarts"],
             "relay_stats_url": self._url("stats"),
         }
 

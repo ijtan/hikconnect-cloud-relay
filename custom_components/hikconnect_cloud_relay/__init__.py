@@ -17,11 +17,13 @@ from .const import (
     CONF_JPEG_QUALITY,
     CONF_PASSWORD,
     CONF_RELAY_HOST,
+    CONF_RTSP_PUBLISH_URL,
     CONF_STREAM_TYPE,
     CONF_USERNAME,
     DEFAULT_API_HOST,
     DEFAULT_FPS,
     DEFAULT_JPEG_QUALITY,
+    DEFAULT_RTSP_PUBLISH_URL,
     DEFAULT_STREAM_TYPE,
     DOMAIN,
 )
@@ -57,6 +59,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         int(options.get(CONF_STREAM_TYPE, DEFAULT_STREAM_TYPE)),
         float(options.get(CONF_FPS, DEFAULT_FPS)),
         int(options.get(CONF_JPEG_QUALITY, DEFAULT_JPEG_QUALITY)),
+        str(options.get(CONF_RTSP_PUBLISH_URL, DEFAULT_RTSP_PUBLISH_URL) or ""),
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "relay": relay,

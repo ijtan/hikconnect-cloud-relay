@@ -1,0 +1,11 @@
+logLevel: info
+
+# The relay publishes H.264 over TCP. Restrict the server to TCP as well.
+rtsp: true
+rtspAddress: :8554
+rtspTransports: [tcp]
+
+paths:
+  "~^hikconnect/[A-Za-z0-9_-]+$":
+    source: publisher
+    overridePublisher: true
