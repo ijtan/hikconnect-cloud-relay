@@ -26,6 +26,15 @@ class HikvisionMediaView(HomeAssistantView):
             return web.json_response({"error": "entry not found"}, status=404)
         relay = runtime["relay"]
 
+        if (
+            resource in {"snapshot.jpg", "stream.ts", "stream.mjpeg"}
+            and not relay.legacy_outputs_enabled
+        ):
+            return web.json_response(
+                {"error": "legacy HTTP outputs are disabled; use the RTSP stream"},
+                status=503,
+            )
+
         if resource == "stats":
             return web.json_response(relay.stats())
         if resource == "health":

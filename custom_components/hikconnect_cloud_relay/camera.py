@@ -68,24 +68,30 @@ class HikvisionIntercomCamera(Camera):
         stats = self._runtime["relay"].stats()
         return {
             "stream_status": stats["status"],
+            "output_mode": stats["output_mode"],
             "stream_type": stats["stream_type"],
             "source_picture_timestamps": stats["picture_timestamps"],
             "jpeg_frames": stats["jpeg_frames"],
             "rtsp_enabled": stats["rtsp_enabled"],
             "rtsp_status": stats["rtsp_status"],
             "rtsp_restarts": stats["rtsp_restarts"],
+            "rtsp_reader_url": self._runtime.get("rtsp_reader_url"),
             "relay_stats_url": self._url("stats"),
         }
 
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
+        if not self._runtime["relay"].legacy_outputs_enabled:
+            return None
         try:
             return await self.hass.async_add_executor_job(self._runtime["relay"].snapshot, 15.0)
         except queue.Empty:
             return None
 
     async def async_get_stream_source(self) -> str | None:
+        if self._runtime["relay"].rtsp_enabled:
+            return self._runtime.get("rtsp_reader_url")
         return self._url("stream.mjpeg")
 
     def _url(self, resource: str) -> str:

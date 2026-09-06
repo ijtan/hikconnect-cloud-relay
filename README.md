@@ -91,7 +91,12 @@ After setup, open the integration's options to choose:
 | MJPEG target FPS | `0` keeps the source cadence; a positive value limits output |
 | JPEG quality | `2` is best/largest; `31` is smallest |
 | Relay host | Hostname or IP used by external consumers to reach Home Assistant |
-| RTSP publish URL | Optional `rtsp://` URL for an external RTSP server; blank disables it |
+| Output mode | `legacy`, `rtsp`, or `both` during migration |
+
+`legacy` preserves the current MJPEG and MPEG-TS outputs. `rtsp` publishes
+H.264 without the legacy transcode, and `both` runs both paths while migrating
+consumers. In RTSP-only mode, the camera entity returns its generated RTSP
+source and the legacy HTTP media endpoints are intentionally unavailable.
 
 The camera entity returns its stream source to Home Assistant. The relay also
 provides these local endpoints:
@@ -110,18 +115,19 @@ The integration can publish the original H.264 access units to an external
 RTSP server such as MediaMTX. It is an RTSP publisher, not an RTSP server. The
 cloud session, channel discovery, keepalives, and reconnect logic remain in
 this integration, while the RTSP publisher runs independently beside the
-existing MJPEG and MPEG-TS outputs.
+legacy HTTP outputs.
 
-Configure a URL such as:
+Choose `RTSP` in the integration options. The integration derives a stable
+path from the selected device serial and channel, for example:
 
 ```text
-rtsp://127.0.0.1:8554/hikconnect/ENTRY_ID
+rtsp://127.0.0.1:8554/hikconnect/<Q-SERIAL>_1
 ```
 
-The URL is used by an FFmpeg process with `-c:v copy`, TCP transport, and no
-audio. It must not contain credentials because process arguments can be
-visible to other local users. Use a trusted bind address, firewall rules, or
-the RTSP server's own authentication configuration instead.
+No Home Assistant config-entry ID or RTSP URL needs to be entered. The
+publisher uses FFmpeg with `-c:v copy`, TCP transport, and no audio. It uses a
+local MediaMTX server on port `8554` by default; MediaMTX remains a separate
+dependency and must be installed and protected on the trusted network.
 
 The publisher waits for SPS, PPS, and an IDR frame before sending a new
 connection. It preserves the source GOP and cannot create new keyframes. A
@@ -130,9 +136,10 @@ outputs. After the cloud source reconnects, the publisher starts at a fresh
 decodable keyframe.
 
 A minimal MediaMTX configuration is provided in
-[`examples/mediamtx.yml`](examples/mediamtx.yml). The relay host and RTSP
+ [`examples/mediamtx.yml`](examples/mediamtx.yml). The relay host and RTSP
 server may be the same machine. If they are different, use the relay's local
-publish URL and the server's reachable address for Frigate readers.
+publish target and the generated reader URL shown on the camera entity for
+Frigate readers.
 
 ## Frigate setup
 
@@ -170,7 +177,7 @@ only the go2rtc source:
 go2rtc:
   streams:
     front_door:
-      - rtsp://homeassistant:8554/hikconnect/ENTRY_ID
+      - rtsp://homeassistant:8554/hikconnect/<Q-SERIAL>_1
 
 cameras:
   front_door:

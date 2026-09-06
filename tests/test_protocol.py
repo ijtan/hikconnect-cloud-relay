@@ -129,6 +129,32 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             rtsp.validate_rtsp_publish_url("rtsp://user:pass@127.0.0.1:8554/test")
 
+    def test_rtsp_path_is_derived_from_device_identity(self) -> None:
+        self.assertEqual(
+            rtsp.default_rtsp_publish_url("<Q-SERIAL>", 1),
+            "rtsp://127.0.0.1:8554/hikconnect/<Q-SERIAL>_1",
+        )
+        self.assertEqual(
+            rtsp.rtsp_reader_url("192.168.4.52", "<Q-SERIAL>", 1),
+            "rtsp://192.168.4.52:8554/hikconnect/<Q-SERIAL>_1",
+        )
+
+    def test_rtsp_mode_disables_legacy_transcode(self) -> None:
+        cloud_relay = relay.CloudRelay(
+            username="user",
+            password="password",
+            api_host="https://api.example.test",
+            serial="station",
+            channel=1,
+            stream_type=1,
+            fps=0,
+            jpeg_quality=5,
+            output_mode="rtsp",
+            rtsp_publish_url="rtsp://127.0.0.1:8554/hikconnect/station_1",
+        )
+        self.assertFalse(cloud_relay.legacy_outputs_enabled)
+        self.assertTrue(cloud_relay.rtsp_enabled)
+
     def test_copy_gate_waits_for_parameter_sets_and_idr(self) -> None:
         gate = rtsp.H264CopyGate()
         sps, pps, idr, pframe = b"\x67sps", b"\x68pps", b"\x65idr", b"\x41p"

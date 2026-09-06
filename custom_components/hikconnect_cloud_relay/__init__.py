@@ -15,6 +15,7 @@ from .const import (
     CONF_DEVICE_SERIAL,
     CONF_FPS,
     CONF_JPEG_QUALITY,
+    CONF_OUTPUT_MODE,
     CONF_PASSWORD,
     CONF_RELAY_HOST,
     CONF_RTSP_PUBLISH_URL,
@@ -23,12 +24,17 @@ from .const import (
     DEFAULT_API_HOST,
     DEFAULT_FPS,
     DEFAULT_JPEG_QUALITY,
+    DEFAULT_OUTPUT_MODE,
+    DEFAULT_RELAY_HOST,
     DEFAULT_RTSP_PUBLISH_URL,
     DEFAULT_STREAM_TYPE,
     DOMAIN,
+    OUTPUT_MODES,
+    OUTPUT_MODE_RTSP,
 )
 from .media_view import HikvisionMediaView
 from .relay import CloudRelay
+from .rtsp import default_rtsp_publish_url, rtsp_reader_url
 
 _PLATFORMS = [Platform.CAMERA]
 
@@ -50,21 +56,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     options = entry.options
     data = entry.data
+    serial = str(data[CONF_DEVICE_SERIAL])
+    channel = int(data[CONF_CHANNEL])
+    legacy_rtsp_url = str(options.get(CONF_RTSP_PUBLISH_URL, DEFAULT_RTSP_PUBLISH_URL) or "")
+    output_mode = str(
+        options.get(
+            CONF_OUTPUT_MODE,
+            OUTPUT_MODE_RTSP if legacy_rtsp_url else DEFAULT_OUTPUT_MODE,
+        )
+    )
+    if output_mode not in OUTPUT_MODES:
+        output_mode = DEFAULT_OUTPUT_MODE
+    relay_host = str(options.get(CONF_RELAY_HOST, DEFAULT_RELAY_HOST))
+    generated_publish_url = default_rtsp_publish_url(serial, channel)
     relay = CloudRelay(
         data[CONF_USERNAME],
         data[CONF_PASSWORD],
         data.get(CONF_API_HOST, DEFAULT_API_HOST),
-        data[CONF_DEVICE_SERIAL],
-        int(data[CONF_CHANNEL]),
+        serial,
+        channel,
         int(options.get(CONF_STREAM_TYPE, DEFAULT_STREAM_TYPE)),
         float(options.get(CONF_FPS, DEFAULT_FPS)),
         int(options.get(CONF_JPEG_QUALITY, DEFAULT_JPEG_QUALITY)),
-        str(options.get(CONF_RTSP_PUBLISH_URL, DEFAULT_RTSP_PUBLISH_URL) or ""),
+        output_mode,
+        legacy_rtsp_url or generated_publish_url,
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "relay": relay,
         "entry": entry,
-        "relay_host": str(options.get(CONF_RELAY_HOST, "127.0.0.1")),
+        "relay_host": relay_host,
+        "rtsp_reader_url": rtsp_reader_url(relay_host, serial, channel),
     }
     relay.start()
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))

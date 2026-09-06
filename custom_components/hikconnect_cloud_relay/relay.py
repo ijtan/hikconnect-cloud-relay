@@ -13,6 +13,7 @@ import time
 from typing import BinaryIO
 
 from .cloud import HikConnectClient
+from .const import OUTPUT_MODE_BOTH, OUTPUT_MODE_RTSP
 from .rtsp import RtspCopyPublisher
 from .vtm import rtp_payload, rtp_timestamp
 
@@ -195,6 +196,7 @@ class CloudRelay:
         stream_type: int,
         fps: float,
         jpeg_quality: int,
+        output_mode: str = "legacy",
         rtsp_publish_url: str = "",
     ) -> None:
         self.username = username
@@ -205,8 +207,13 @@ class CloudRelay:
         self.stream_type = stream_type
         self.fps = fps
         self.jpeg_quality = jpeg_quality
+        self.output_mode = output_mode
+        self._legacy_outputs_enabled = output_mode != OUTPUT_MODE_RTSP
         self._rtsp = (
-            RtspCopyPublisher(rtsp_publish_url) if rtsp_publish_url.strip() else None
+            RtspCopyPublisher(rtsp_publish_url)
+            if output_mode in (OUTPUT_MODE_RTSP, OUTPUT_MODE_BOTH)
+            and rtsp_publish_url.strip()
+            else None
         )
         self.frames = FrameBuffer()
         self.mpegts = ChunkBuffer()
@@ -271,6 +278,14 @@ class CloudRelay:
     def unsubscribe_mpegts(self, client: queue.Queue[bytes]) -> None:
         self.mpegts.unsubscribe(client)
 
+    @property
+    def legacy_outputs_enabled(self) -> bool:
+        return self._legacy_outputs_enabled
+
+    @property
+    def rtsp_enabled(self) -> bool:
+        return self._rtsp is not None
+
     def note_rtp(self) -> None:
         with self._metrics_lock:
             self._rtp_packets += 1
@@ -314,6 +329,8 @@ class CloudRelay:
                 "stream_type": self.stream_type,
                 "fps_target": self.fps,
                 "jpeg_quality": self.jpeg_quality,
+                "output_mode": self.output_mode,
+                "legacy_outputs_enabled": self._legacy_outputs_enabled,
                 "uptime_seconds": round(time.monotonic() - self._started_at, 1),
                 "reconnect_attempt": self._reconnect_attempt,
                 "retry_in_seconds": round(max(0.0, self._next_retry_at - time.monotonic()), 1),
@@ -377,28 +394,29 @@ class CloudRelay:
                 "Hikvision VTM stream up serial=%s channel=%s result=%s",
                 self.serial, self.channel, info.result
             )
-            process, mpegts_output = self._start_ffmpeg()
-            output_thread = threading.Thread(
-                target=self._publish_jpegs,
-                args=(process.stdout,),
-                name="hikvision-vtm-jpeg",
-                daemon=True,
-            )
-            output_thread.start()
-            mpegts_thread = threading.Thread(
-                target=self._publish_mpegts,
-                args=(mpegts_output,),
-                name="hikvision-vtm-mpegts",
-                daemon=True,
-            )
-            mpegts_thread.start()
+            if self._legacy_outputs_enabled:
+                process, mpegts_output = self._start_ffmpeg()
+                output_thread = threading.Thread(
+                    target=self._publish_jpegs,
+                    args=(process.stdout,),
+                    name="hikvision-vtm-jpeg",
+                    daemon=True,
+                )
+                output_thread.start()
+                mpegts_thread = threading.Thread(
+                    target=self._publish_mpegts,
+                    args=(mpegts_output,),
+                    name="hikvision-vtm-mpegts",
+                    daemon=True,
+                )
+                mpegts_thread.start()
             decoder = H264Depacketizer()
             parameter_sets = H264ParameterSetInjector()
             self._set_state("streaming")
             with self._metrics_lock:
                 self._last_rtp_timestamp = None
-            stdin = process.stdin
-            if stdin is None:
+            stdin = process.stdin if process is not None else None
+            if process is not None and stdin is None:
                 raise RuntimeError("FFmpeg stdin is unavailable")
             for packet in stream.iter_packets():
                 if self.stop_event.is_set():
@@ -412,10 +430,11 @@ class CloudRelay:
                 self.note_nals(len(nals))
                 if self._rtsp is not None and nals:
                     self._rtsp.submit(nals)
-                for nal in parameter_sets.feed(nals):
-                    stdin.write(b"\x00\x00\x00\x01" + nal)
-                if nals:
-                    stdin.flush()
+                if stdin is not None:
+                    for nal in parameter_sets.feed(nals):
+                        stdin.write(b"\x00\x00\x00\x01" + nal)
+                    if nals:
+                        stdin.flush()
         finally:
             with self._active_lock:
                 if self._active_stream is stream:

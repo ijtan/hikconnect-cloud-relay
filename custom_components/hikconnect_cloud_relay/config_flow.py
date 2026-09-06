@@ -19,6 +19,7 @@ from .const import (
     CONF_DEVICE_SERIAL,
     CONF_FPS,
     CONF_JPEG_QUALITY,
+    CONF_OUTPUT_MODE,
     CONF_PASSWORD,
     CONF_RELAY_HOST,
     CONF_RTSP_PUBLISH_URL,
@@ -27,15 +28,21 @@ from .const import (
     DEFAULT_API_HOST,
     DEFAULT_FPS,
     DEFAULT_JPEG_QUALITY,
+    DEFAULT_OUTPUT_MODE,
     DEFAULT_RELAY_HOST,
-    DEFAULT_RTSP_PUBLISH_URL,
     DEFAULT_STREAM_TYPE,
     DOMAIN,
     MAX_JPEG_QUALITY,
     MIN_JPEG_QUALITY,
+    OUTPUT_MODE_RTSP,
     STREAM_TYPES,
 )
-from .rtsp import validate_rtsp_publish_url
+
+OUTPUT_MODE_LABELS = {
+    "legacy": "Legacy HTTP",
+    "rtsp": "RTSP copy",
+    "both": "Both (migration)",
+}
 
 USER_SCHEMA = vol.Schema(
     {
@@ -170,16 +177,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         if user_input is not None:
-            try:
-                user_input[CONF_RTSP_PUBLISH_URL] = validate_rtsp_publish_url(
-                    user_input.get(CONF_RTSP_PUBLISH_URL)
-                )
-            except ValueError:
-                return self.async_show_form(
-                    step_id="init",
-                    data_schema=self._schema(self.config_entry.options),
-                    errors={"base": "invalid_rtsp_url"},
-                )
             return self.async_create_entry(title="", data=user_input)
         return self.async_show_form(
             step_id="init", data_schema=self._schema(self.config_entry.options)
@@ -187,8 +184,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     @staticmethod
     def _schema(current: dict[str, Any]) -> vol.Schema:
+        output_mode = current.get(CONF_OUTPUT_MODE)
+        if output_mode is None and current.get(CONF_RTSP_PUBLISH_URL):
+            output_mode = OUTPUT_MODE_RTSP
         return vol.Schema(
             {
+                vol.Required(
+                    CONF_OUTPUT_MODE,
+                    default=output_mode or DEFAULT_OUTPUT_MODE,
+                ): vol.In(OUTPUT_MODE_LABELS),
                 vol.Required(
                     CONF_STREAM_TYPE,
                     default=current.get(CONF_STREAM_TYPE, DEFAULT_STREAM_TYPE),

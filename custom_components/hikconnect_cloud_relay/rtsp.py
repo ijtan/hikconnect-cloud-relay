@@ -15,6 +15,8 @@ _LOGGER = logging.getLogger(__name__)
 _START_CODE = b"\x00\x00\x00\x01"
 _DEFAULT_QUEUE_BYTES = 512 * 1024
 _MAX_RETRY_DELAY = 30.0
+RTSP_DEFAULT_HOST = "127.0.0.1"
+RTSP_DEFAULT_PORT = 8554
 
 
 def validate_rtsp_publish_url(value: str | None) -> str:
@@ -46,6 +48,28 @@ def validate_rtsp_publish_url(value: str | None) -> str:
     if parsed.fragment:
         raise ValueError("RTSP publish URL must not include a fragment")
     return value
+
+
+def rtsp_stream_path(serial: str, channel: int) -> str:
+    """Build a stable path without exposing Home Assistant's opaque entry ID."""
+
+    safe_serial = re.sub(r"[^A-Za-z0-9_-]", "_", serial).strip("_") or "device"
+    return f"/hikconnect/{safe_serial}_{int(channel)}"
+
+
+def default_rtsp_publish_url(serial: str, channel: int) -> str:
+    """Return the default local MediaMTX publisher URL for a linked channel."""
+
+    return f"rtsp://{RTSP_DEFAULT_HOST}:{RTSP_DEFAULT_PORT}{rtsp_stream_path(serial, channel)}"
+
+
+def rtsp_reader_url(host: str, serial: str, channel: int) -> str:
+    """Return the LAN URL that external readers such as Frigate should use."""
+
+    clean_host = host.strip()
+    if "://" in clean_host:
+        clean_host = clean_host.split("://", 1)[1].rstrip("/")
+    return f"rtsp://{clean_host}:{RTSP_DEFAULT_PORT}{rtsp_stream_path(serial, channel)}"
 
 
 def redact_rtsp_text(value: str | None) -> str | None:
