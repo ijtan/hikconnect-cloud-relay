@@ -98,7 +98,7 @@ class HikvisionIntercomCamera(Camera):
         except queue.Empty:
             return None
 
-    async def async_get_stream_source(self) -> str | None:
+    async def stream_source(self) -> str | None:
         if self._runtime["relay"].rtsp_enabled:
             return self._runtime.get("rtsp_reader_url")
         return self._url("stream.mjpeg")
