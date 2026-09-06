@@ -75,6 +75,9 @@ class HikvisionIntercomCamera(Camera):
             "rtsp_enabled": stats["rtsp_enabled"],
             "rtsp_status": stats["rtsp_status"],
             "rtsp_restarts": stats["rtsp_restarts"],
+            "rtsp_server_enabled": stats["rtsp_server_enabled"],
+            "rtsp_server_status": stats["rtsp_server_status"],
+            "rtsp_server_restarts": stats["rtsp_server_restarts"],
             "rtsp_reader_url": self._runtime.get("rtsp_reader_url"),
             "relay_stats_url": self._url("stats"),
         }

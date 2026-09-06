@@ -138,6 +138,8 @@ class ProtocolTests(unittest.TestCase):
             rtsp.rtsp_reader_url("192.168.4.52", "<Q-SERIAL>", 1),
             "rtsp://192.168.4.52:8554/hikconnect/<Q-SERIAL>_1",
         )
+        self.assertTrue(rtsp.uses_managed_local_server("rtsp://127.0.0.1:8554/test"))
+        self.assertFalse(rtsp.uses_managed_local_server("rtsp://192.168.4.52:8554/test"))
 
     def test_rtsp_mode_disables_legacy_transcode(self) -> None:
         cloud_relay = relay.CloudRelay(

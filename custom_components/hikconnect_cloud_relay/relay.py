@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 import logging
 import os
+from pathlib import Path
 import queue
 import shutil
 import subprocess
@@ -14,7 +15,8 @@ from typing import BinaryIO
 
 from .cloud import HikConnectClient
 from .const import OUTPUT_MODE_BOTH, OUTPUT_MODE_RTSP
-from .rtsp import RtspCopyPublisher
+from .mediamtx import MediaMtxServer, ensure_mediamtx
+from .rtsp import RtspCopyPublisher, uses_managed_local_server
 from .vtm import rtp_payload, rtp_timestamp
 
 _LOGGER = logging.getLogger(__name__)
@@ -198,6 +200,7 @@ class CloudRelay:
         jpeg_quality: int,
         output_mode: str = "legacy",
         rtsp_publish_url: str = "",
+        rtsp_server_storage: Path | None = None,
     ) -> None:
         self.username = username
         self.password = password
@@ -215,6 +218,13 @@ class CloudRelay:
             and rtsp_publish_url.strip()
             else None
         )
+        self._rtsp_server_storage = rtsp_server_storage
+        self._manages_rtsp_server = (
+            self._rtsp is not None
+            and rtsp_server_storage is not None
+            and uses_managed_local_server(rtsp_publish_url)
+        )
+        self._rtsp_server = None
         self.frames = FrameBuffer()
         self.mpegts = ChunkBuffer()
         self.stop_event = threading.Event()
@@ -248,8 +258,20 @@ class CloudRelay:
             self._error = error
 
     def start(self) -> None:
+        if self._manages_rtsp_server and self._rtsp_server_storage is not None:
+            self._rtsp_server = MediaMtxServer(
+                ensure_mediamtx(self._rtsp_server_storage / "mediamtx"),
+                8554,
+            )
+        if self._rtsp_server is not None:
+            self._rtsp_server.start()
         if self._rtsp is not None:
-            self._rtsp.start()
+            try:
+                self._rtsp.start()
+            except Exception:
+                if self._rtsp_server is not None:
+                    self._rtsp_server.stop()
+                raise
         self._thread.start()
 
     def stop(self) -> None:
@@ -261,6 +283,8 @@ class CloudRelay:
         self._thread.join(timeout=12)
         if self._rtsp is not None:
             self._rtsp.stop()
+        if self._rtsp_server is not None:
+            self._rtsp_server.stop()
         self._set_state("stopped")
 
     def snapshot(self, timeout: float = 15.0) -> bytes:
@@ -346,6 +370,13 @@ class CloudRelay:
                 "rtsp_dropped_bytes": rtsp_stats["dropped_bytes"] if rtsp_stats else 0,
                 "rtsp_queued_bytes": rtsp_stats["queued_bytes"] if rtsp_stats else 0,
                 "rtsp_last_error": rtsp_stats["last_error"] if rtsp_stats else None,
+                "rtsp_server_enabled": self._manages_rtsp_server,
+                "rtsp_server_status": (
+                    self._rtsp_server.status if self._rtsp_server is not None else "external"
+                ),
+                "rtsp_server_restarts": (
+                    self._rtsp_server.restarts if self._rtsp_server is not None else 0
+                ),
             }
         )
         return values

@@ -38,7 +38,7 @@
     "step": {
       "init": {
         "title": "Stream options",
-        "description": "Choose the output mode. RTSP copy mode needs an external RTSP server such as MediaMTX. Both keeps the legacy HTTP outputs during migration.",
+        "description": "Choose the output mode. RTSP copy mode manages a local MediaMTX server by default. Both keeps the legacy HTTP outputs during migration.",
         "data": {
           "output_mode": "Output mode (legacy HTTP, RTSP copy, or both)",
           "stream_type": "Cloud VTM selector",

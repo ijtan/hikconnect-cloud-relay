@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -80,6 +81,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         int(options.get(CONF_JPEG_QUALITY, DEFAULT_JPEG_QUALITY)),
         output_mode,
         legacy_rtsp_url or generated_publish_url,
+        Path(hass.config.path(f".storage/{DOMAIN}")),
     )
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "relay": relay,
@@ -87,7 +89,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "relay_host": relay_host,
         "rtsp_reader_url": rtsp_reader_url(relay_host, serial, channel),
     }
-    relay.start()
+    await hass.async_add_executor_job(relay.start)
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     await hass.config_entries.async_forward_entry_setups(entry, _PLATFORMS)
     return True

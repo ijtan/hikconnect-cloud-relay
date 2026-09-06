@@ -111,11 +111,10 @@ http://HOME_ASSISTANT:8123/api/hikconnect_cloud_relay/ENTRY_ID/stats
 
 ### Optional RTSP copy-mode output
 
-The integration can publish the original H.264 access units to an external
-RTSP server such as MediaMTX. It is an RTSP publisher, not an RTSP server. The
-cloud session, channel discovery, keepalives, and reconnect logic remain in
-this integration, while the RTSP publisher runs independently beside the
-legacy HTTP outputs.
+The integration can publish the original H.264 access units through MediaMTX.
+The cloud session, channel discovery, keepalives, reconnect logic, and the
+default local MediaMTX server are managed by this integration. The RTSP
+publisher remains independently supervised beside the legacy HTTP outputs.
 
 Choose `RTSP` in the integration options. The integration derives a stable
 path from the selected device serial and channel, for example:
@@ -125,9 +124,10 @@ rtsp://127.0.0.1:8554/hikconnect/<Q-SERIAL>_1
 ```
 
 No Home Assistant config-entry ID or RTSP URL needs to be entered. The
-publisher uses FFmpeg with `-c:v copy`, TCP transport, and no audio. It uses a
-local MediaMTX server on port `8554` by default; MediaMTX remains a separate
-dependency and must be installed and protected on the trusted network.
+publisher uses FFmpeg with `-c:v copy`, TCP transport, and no audio. The
+integration downloads a pinned MediaMTX binary into its persistent HA storage
+and supervises it on port `8554` by default. The port must not be claimed by
+another RTSP server or integration.
 
 The publisher waits for SPS, PPS, and an IDR frame before sending a new
 connection. It preserves the source GOP and cannot create new keyframes. A
@@ -136,10 +136,10 @@ outputs. After the cloud source reconnects, the publisher starts at a fresh
 decodable keyframe.
 
 A minimal MediaMTX configuration is provided in
- [`examples/mediamtx.yml`](examples/mediamtx.yml). The relay host and RTSP
-server may be the same machine. If they are different, use the relay's local
-publish target and the generated reader URL shown on the camera entity for
-Frigate readers.
+[`examples/mediamtx.yml`](examples/mediamtx.yml). The relay host and RTSP
+server may be the same machine. If an existing external RTSP server is used
+instead, it must remain available independently and the generated reader URL
+shown on the camera entity should be used for Frigate readers.
 
 ## Frigate setup
 
@@ -199,8 +199,9 @@ boundaries.
 
 ## Current limitations
 
-- RTSP publishing requires an external RTSP server such as MediaMTX; the
-  integration does not embed an RTSP server.
+- RTSP-only mode owns a local MediaMTX server on port `8554` by default; use a
+  separately supervised server only when deliberately configuring a non-local
+  publisher target.
 - This release is video-only. It does not expose a passive audio listener or
   implement Hik-Connect two-way audio/call control.
 - The tested intercom delivered a continuous `640×480` cloud feed. The camera

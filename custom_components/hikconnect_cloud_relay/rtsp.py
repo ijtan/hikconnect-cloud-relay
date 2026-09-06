@@ -1,4 +1,4 @@
-"""Optional H.264 stream-copy publishing to an external RTSP server."""
+"""Optional H.264 stream-copy publishing through a local RTSP server."""
 
 from __future__ import annotations
 
@@ -70,6 +70,15 @@ def rtsp_reader_url(host: str, serial: str, channel: int) -> str:
     if "://" in clean_host:
         clean_host = clean_host.split("://", 1)[1].rstrip("/")
     return f"rtsp://{clean_host}:{RTSP_DEFAULT_PORT}{rtsp_stream_path(serial, channel)}"
+
+
+def uses_managed_local_server(value: str) -> bool:
+    """Return whether the integration should own the default local server."""
+
+    parsed = urlparse(validate_rtsp_publish_url(value))
+    return parsed.hostname in {"127.0.0.1", "localhost"} and (
+        parsed.port or 554
+    ) == RTSP_DEFAULT_PORT
 
 
 def redact_rtsp_text(value: str | None) -> str | None:
