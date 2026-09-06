@@ -121,30 +121,6 @@ class ProtocolTests(unittest.TestCase):
         self.assertNotIn("-vf", command)
         self.assertNotIn("mpegts", command)
 
-    def test_rtsp_mode_has_a_low_rate_preview_decoder(self) -> None:
-        cloud_relay = relay.CloudRelay(
-            username="user",
-            password="password",
-            api_host="https://api.example.test",
-            serial="station",
-            channel=1,
-            stream_type=1,
-            fps=0,
-            jpeg_quality=5,
-            output_mode="rtsp",
-            rtsp_publish_url="rtsp://127.0.0.1:8554/hikconnect/station_1",
-        )
-        process = types.SimpleNamespace(stdin=None, stdout=None)
-        with patch.object(relay.shutil, "which", return_value="ffmpeg"), patch.object(
-            relay.subprocess, "Popen", return_value=process
-        ) as popen:
-            cloud_relay._start_preview_ffmpeg()
-            command = popen.call_args.args[0]
-        self.assertIn("fps=1", command)
-        self.assertIn("mjpeg", command)
-        self.assertNotIn("libx264", command)
-        self.assertNotIn("mpegts", command)
-
     def test_rtsp_url_validation_rejects_credentials(self) -> None:
         self.assertEqual(
             rtsp.validate_rtsp_publish_url(" rtsp://127.0.0.1:8554/hikconnect/test "),

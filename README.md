@@ -135,10 +135,10 @@ publisher failure does not stop the Hik-Connect session or the legacy HTTP
 outputs. After the cloud source reconnects, the publisher starts at a fresh
 decodable keyframe.
 
-RTSP-only mode also keeps a separate low-rate JPEG decoder for Home Assistant's
-still-image camera preview, including the iOS app. This decoder is only for
-the preview image; it does not re-encode the RTSP stream or affect Frigate's
-copy-mode recording.
+RTSP-only mode uses Home Assistant's FFmpeg helper to create a JPEG on demand
+for the still-image camera preview, including the iOS app. This snapshot is
+only for the preview image; it does not re-encode the RTSP stream or affect
+Frigate's copy-mode recording.
 
 A minimal MediaMTX configuration is provided in
 [`examples/mediamtx.yml`](examples/mediamtx.yml). The relay host and RTSP

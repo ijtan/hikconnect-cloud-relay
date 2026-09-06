@@ -3,10 +3,10 @@
   "name": "Hik-Connect Cloud Relay",
   "codeowners": ["@ijtan"],
   "config_flow": true,
-  "dependencies": ["http"],
+  "dependencies": ["ffmpeg", "http"],
   "documentation": "https://github.com/ijtan/hikconnect-cloud-relay",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/ijtan/hikconnect-cloud-relay/issues",
   "requirements": ["requests>=2.31.0"],
-  "version": "0.1.7"
+  "version": "0.1.8"
 }

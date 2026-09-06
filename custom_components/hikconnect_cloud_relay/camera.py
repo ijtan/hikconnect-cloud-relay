@@ -6,6 +6,7 @@ import queue
 from typing import Any
 
 from homeassistant.components.camera import Camera, CameraEntityFeature
+from homeassistant.components.ffmpeg import async_get_image
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo
@@ -85,6 +86,13 @@ class HikvisionIntercomCamera(Camera):
     async def async_camera_image(
         self, width: int | None = None, height: int | None = None
     ) -> bytes | None:
+        if self._runtime["relay"].rtsp_enabled:
+            return await async_get_image(
+                self.hass,
+                self._runtime["rtsp_reader_url"],
+                width=width,
+                height=height,
+            )
         try:
             return await self.hass.async_add_executor_job(self._runtime["relay"].snapshot, 15.0)
         except queue.Empty:
