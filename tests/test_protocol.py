@@ -131,12 +131,12 @@ class ProtocolTests(unittest.TestCase):
 
     def test_rtsp_path_is_derived_from_device_identity(self) -> None:
         self.assertEqual(
-            rtsp.default_rtsp_publish_url("<Q-SERIAL>", 1),
-            "rtsp://127.0.0.1:8554/hikconnect/<Q-SERIAL>_1",
+            rtsp.default_rtsp_publish_url("test-device", 1),
+            "rtsp://127.0.0.1:8554/hikconnect/test-device_1",
         )
         self.assertEqual(
-            rtsp.rtsp_reader_url("192.168.4.52", "<Q-SERIAL>", 1),
-            "rtsp://192.168.4.52:8554/hikconnect/<Q-SERIAL>_1",
+            rtsp.rtsp_reader_url("192.168.4.52", "test-device", 1),
+            "rtsp://192.168.4.52:8554/hikconnect/test-device_1",
         )
         self.assertTrue(rtsp.uses_managed_local_server("rtsp://127.0.0.1:8554/test"))
         self.assertFalse(rtsp.uses_managed_local_server("rtsp://192.168.4.52:8554/test"))
