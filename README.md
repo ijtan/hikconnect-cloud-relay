@@ -182,7 +182,7 @@ only the go2rtc source:
 go2rtc:
   streams:
     front_door:
-      - rtsp://homeassistant:8554/hikconnect/<Q-SERIAL>_1
+       - rtsp://homeassistant:8554/hikconnect/<Q-SERIAL>_1
 
 cameras:
   front_door:
