@@ -471,6 +471,7 @@ class RtspCopyPublisher:
                 if not rtsp_path_is_ready(self._probe_url):
                     probe_failures += 1
                     if probe_failures >= _RTSP_PROBE_FAILURE_LIMIT:
+                        self._set_status("error")
                         self._record_error(RuntimeError("RTSP publisher path is unavailable"))
                         self._terminate_process(process)
                         return
@@ -525,7 +526,18 @@ class RtspCopyPublisher:
             if self._process is not process:
                 return
         if process.poll() is None:
-            process.terminate()
+            try:
+                process.terminate()
+            except OSError:
+                return
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                try:
+                    process.kill()
+                except OSError:
+                    return
+                process.wait(timeout=1)
 
     def _record_error(self, error: Exception) -> None:
         text = redact_rtsp_text(f"{type(error).__name__}: {error}")

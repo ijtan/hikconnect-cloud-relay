@@ -169,6 +169,7 @@ class ProtocolTests(unittest.TestCase):
             publisher._set_status("streaming")
             publisher._watch_process(process)
         terminate.assert_called_once_with(process)
+        self.assertEqual(publisher.status, "error")
 
     def test_rtsp_url_validation_rejects_credentials(self) -> None:
         self.assertEqual(
