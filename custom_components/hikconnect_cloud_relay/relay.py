@@ -20,6 +20,7 @@ from .rtsp import RtspCopyPublisher, uses_managed_local_server
 from .vtm import rtp_payload, rtp_timestamp
 
 _LOGGER = logging.getLogger(__name__)
+_MEDIA_IDLE_TIMEOUT = 20.0
 
 
 class H264Depacketizer:
@@ -243,6 +244,7 @@ class CloudRelay:
         self._mpegts_chunks = 0
         self._mpegts_bytes = 0
         self._started_at = time.monotonic()
+        self._last_rtp_at = self._started_at
         self._active_lock = threading.Lock()
         self._active_stream = None
         self._thread = threading.Thread(target=self._run, name="hikvision-vtm", daemon=True)
@@ -325,6 +327,7 @@ class CloudRelay:
     def note_rtp(self) -> None:
         with self._metrics_lock:
             self._rtp_packets += 1
+            self._last_rtp_at = time.monotonic()
 
     def note_nals(self, count: int) -> None:
         with self._metrics_lock:
@@ -349,6 +352,7 @@ class CloudRelay:
         with self._metrics_lock:
             values = {
                 "rtp_packets": self._rtp_packets,
+                "rtp_idle_seconds": round(time.monotonic() - self._last_rtp_at, 1),
                 "nals": self._nals,
                 "picture_timestamps": self._picture_timestamps,
                 "jpeg_frames": self._jpeg_frames,
@@ -422,6 +426,8 @@ class CloudRelay:
             self._rtsp.reset()
         client = HikConnectClient(self.username, self.password, self.api_host)
         stream = None
+        media_watchdog_stop: threading.Event | None = None
+        media_watchdog_thread: threading.Thread | None = None
         process: subprocess.Popen[bytes] | None = None
         output_thread: threading.Thread | None = None
         mpegts_output: BinaryIO | None = None
@@ -454,6 +460,27 @@ class CloudRelay:
                     daemon=True,
                 )
                 mpegts_thread.start()
+            with self._metrics_lock:
+                self._last_rtp_at = time.monotonic()
+            media_watchdog_stop = threading.Event()
+
+            def stop_idle_stream() -> None:
+                while not media_watchdog_stop.wait(2.0):
+                    with self._metrics_lock:
+                        idle_seconds = time.monotonic() - self._last_rtp_at
+                    if idle_seconds >= _MEDIA_IDLE_TIMEOUT:
+                        _LOGGER.warning(
+                            "Hikvision VTM media idle for %.1fs; reconnecting", idle_seconds
+                        )
+                        stream.close()
+                        return
+
+            media_watchdog_thread = threading.Thread(
+                target=stop_idle_stream,
+                name="hikvision-vtm-media-watchdog",
+                daemon=True,
+            )
+            media_watchdog_thread.start()
             decoder = H264Depacketizer()
             parameter_sets = H264ParameterSetInjector()
             self._set_state("streaming")
@@ -480,6 +507,10 @@ class CloudRelay:
                     if nals:
                         stdin.flush()
         finally:
+            if media_watchdog_stop is not None:
+                media_watchdog_stop.set()
+            if media_watchdog_thread is not None:
+                media_watchdog_thread.join(timeout=1)
             with self._active_lock:
                 if self._active_stream is stream:
                     self._active_stream = None

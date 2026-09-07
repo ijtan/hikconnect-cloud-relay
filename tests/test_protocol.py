@@ -207,6 +207,20 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(cloud_relay.legacy_outputs_enabled)
         self.assertTrue(cloud_relay.rtsp_enabled)
 
+    def test_relay_reports_rtp_idle_time(self) -> None:
+        cloud_relay = relay.CloudRelay(
+            username="user",
+            password="password",
+            api_host="https://api.example.test",
+            serial="station",
+            channel=1,
+            stream_type=1,
+            fps=0,
+            jpeg_quality=5,
+        )
+        with patch.object(relay.time, "monotonic", return_value=cloud_relay._started_at + 4):
+            self.assertEqual(cloud_relay.stats()["rtp_idle_seconds"], 4)
+
     def test_rtsp_health_requires_publisher_ready(self) -> None:
         cloud_relay = relay.CloudRelay(
             username="user",
