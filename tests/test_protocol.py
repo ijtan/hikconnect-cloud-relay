@@ -135,6 +135,25 @@ class ProtocolTests(unittest.TestCase):
         self.assertNotIn("-vf", command)
         self.assertNotIn("mpegts", command)
 
+    def test_rtsp_path_readiness_uses_describe(self) -> None:
+        class FakeSocket:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def sendall(self, _data):
+                return None
+
+            def recv(self, _size):
+                return b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n"
+
+        with patch.object(rtsp.socket, "create_connection", return_value=FakeSocket()):
+            self.assertTrue(
+                rtsp.rtsp_path_is_ready("rtsp://127.0.0.1:8554/hikconnect/test")
+            )
+
     def test_rtsp_url_validation_rejects_credentials(self) -> None:
         self.assertEqual(
             rtsp.validate_rtsp_publish_url(" rtsp://127.0.0.1:8554/hikconnect/test "),

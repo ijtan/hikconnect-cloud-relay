@@ -6,8 +6,10 @@ from collections import deque
 import logging
 import re
 import shutil
+import socket
 import subprocess
 import threading
+import time
 from typing import BinaryIO
 from urllib.parse import urlparse
 
@@ -120,6 +122,27 @@ def build_rtsp_copy_command(ffmpeg: str, publish_url: str) -> list[str]:
         "rtsp",
         publish_url,
     ]
+
+
+def rtsp_path_is_ready(publish_url: str, timeout: float = 2.0) -> bool:
+    """Return whether an RTSP publisher path currently answers DESCRIBE."""
+
+    parsed = urlparse(validate_rtsp_publish_url(publish_url))
+    port = parsed.port or RTSP_DEFAULT_PORT
+    request = (
+        f"DESCRIBE {publish_url} RTSP/1.0\r\n"
+        "CSeq: 1\r\n"
+        "Accept: application/sdp\r\n"
+        "User-Agent: hikconnect-cloud-relay\r\n"
+        "\r\n"
+    ).encode()
+    try:
+        with socket.create_connection((parsed.hostname, port), timeout=timeout) as connection:
+            connection.sendall(request)
+            response = connection.recv(4096)
+    except OSError:
+        return False
+    return response.startswith(b"RTSP/1.0 200 ")
 
 
 class H264CopyGate:
@@ -237,6 +260,7 @@ class RtspCopyPublisher:
             raise ValueError("RTSP publish URL is required")
         self._ffmpeg = ffmpeg
         self._queue = _ByteQueue(max_queue_bytes)
+        self._probe_url = self.publish_url if uses_managed_local_server(self.publish_url) else None
         self._gate = H264CopyGate()
         self._stop_event = threading.Event()
         self._restart_event = threading.Event()
@@ -397,12 +421,22 @@ class RtspCopyPublisher:
         if stdin is None:
             self._record_error(RuntimeError("RTSP FFmpeg stdin is unavailable"))
             return
+        last_probe = time.monotonic()
         while not self._stop_event.is_set():
             if self._restart_event.is_set():
                 self._restart_event.clear()
                 return
             if process.poll() is not None:
                 return
+            if (
+                self._probe_url is not None
+                and self.status == "streaming"
+                and time.monotonic() - last_probe >= 5.0
+            ):
+                last_probe = time.monotonic()
+                if not rtsp_path_is_ready(self._probe_url):
+                    self._record_error(RuntimeError("RTSP publisher path is unavailable"))
+                    return
             chunk = self._queue.get(0.5)
             if chunk is None:
                 continue
