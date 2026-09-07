@@ -154,6 +154,22 @@ class ProtocolTests(unittest.TestCase):
                 rtsp.rtsp_path_is_ready("rtsp://127.0.0.1:8554/hikconnect/test")
             )
 
+    def test_rtsp_watchdog_terminates_child_when_path_disappears(self) -> None:
+        publisher = rtsp.RtspCopyPublisher(
+            "rtsp://127.0.0.1:8554/hikconnect/test"
+        )
+        process = Mock()
+        process.poll.return_value = None
+        with (
+            patch.object(rtsp, "_RTSP_PROBE_GRACE_PERIOD", 0.0),
+            patch.object(rtsp, "_RTSP_PROBE_INTERVAL", 0.0),
+            patch.object(rtsp, "rtsp_path_is_ready", return_value=False),
+            patch.object(publisher, "_terminate_process") as terminate,
+        ):
+            publisher._set_status("streaming")
+            publisher._watch_process(process)
+        terminate.assert_called_once_with(process)
+
     def test_rtsp_url_validation_rejects_credentials(self) -> None:
         self.assertEqual(
             rtsp.validate_rtsp_publish_url(" rtsp://127.0.0.1:8554/hikconnect/test "),

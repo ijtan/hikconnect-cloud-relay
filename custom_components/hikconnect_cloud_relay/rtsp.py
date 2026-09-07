@@ -17,6 +17,9 @@ _LOGGER = logging.getLogger(__name__)
 _START_CODE = b"\x00\x00\x00\x01"
 _DEFAULT_QUEUE_BYTES = 512 * 1024
 _MAX_RETRY_DELAY = 30.0
+_RTSP_PROBE_INTERVAL = 5.0
+_RTSP_PROBE_GRACE_PERIOD = 10.0
+_RTSP_PROBE_FAILURE_LIMIT = 2
 RTSP_DEFAULT_HOST = "127.0.0.1"
 RTSP_DEFAULT_PORT = 8554
 
@@ -139,10 +142,15 @@ def rtsp_path_is_ready(publish_url: str, timeout: float = 2.0) -> bool:
     try:
         with socket.create_connection((parsed.hostname, port), timeout=timeout) as connection:
             connection.sendall(request)
-            response = connection.recv(4096)
+            response = bytearray()
+            while b"\r\n\r\n" not in response and len(response) < 8192:
+                chunk = connection.recv(4096)
+                if not chunk:
+                    break
+                response.extend(chunk)
     except OSError:
         return False
-    return response.startswith(b"RTSP/1.0 200 ")
+    return bytes(response).startswith(b"RTSP/1.0 200 ")
 
 
 class H264CopyGate:
@@ -414,6 +422,12 @@ class RtspCopyPublisher:
                 name="hikvision-rtsp-stderr",
                 daemon=True,
             ).start()
+        threading.Thread(
+            target=self._watch_process,
+            args=(process,),
+            name="hikvision-rtsp-watchdog",
+            daemon=True,
+        ).start()
         return process
 
     def _forward_to_process(self, process: subprocess.Popen[bytes]) -> None:
@@ -421,22 +435,12 @@ class RtspCopyPublisher:
         if stdin is None:
             self._record_error(RuntimeError("RTSP FFmpeg stdin is unavailable"))
             return
-        last_probe = time.monotonic()
         while not self._stop_event.is_set():
             if self._restart_event.is_set():
                 self._restart_event.clear()
                 return
             if process.poll() is not None:
                 return
-            if (
-                self._probe_url is not None
-                and self.status == "streaming"
-                and time.monotonic() - last_probe >= 5.0
-            ):
-                last_probe = time.monotonic()
-                if not rtsp_path_is_ready(self._probe_url):
-                    self._record_error(RuntimeError("RTSP publisher path is unavailable"))
-                    return
             chunk = self._queue.get(0.5)
             if chunk is None:
                 continue
@@ -445,6 +449,34 @@ class RtspCopyPublisher:
                 stdin.flush()
             except (BrokenPipeError, OSError) as exc:
                 self._record_error(exc)
+                return
+
+    def _watch_process(self, process: subprocess.Popen[bytes]) -> None:
+        """Detect a lost publisher even if forwarding blocks on FFmpeg stdin."""
+
+        started_at = time.monotonic()
+        last_probe = started_at
+        probe_failures = 0
+        while not self._stop_event.is_set() and process.poll() is None:
+            now = time.monotonic()
+            if self.status != "streaming":
+                probe_failures = 0
+            if (
+                self._probe_url is not None
+                and self.status == "streaming"
+                and now - started_at >= _RTSP_PROBE_GRACE_PERIOD
+                and now - last_probe >= _RTSP_PROBE_INTERVAL
+            ):
+                last_probe = now
+                if not rtsp_path_is_ready(self._probe_url):
+                    probe_failures += 1
+                    if probe_failures >= _RTSP_PROBE_FAILURE_LIMIT:
+                        self._record_error(RuntimeError("RTSP publisher path is unavailable"))
+                        self._terminate_process(process)
+                        return
+                else:
+                    probe_failures = 0
+            if self._stop_event.wait(0.5):
                 return
 
     def _drain_stderr(self, stderr: BinaryIO) -> None:
@@ -485,7 +517,14 @@ class RtspCopyPublisher:
     def _terminate_active_process(self) -> None:
         with self._process_lock:
             process = self._process
-        if process is not None and process.poll() is None:
+        if process is not None:
+            self._terminate_process(process)
+
+    def _terminate_process(self, process: subprocess.Popen[bytes]) -> None:
+        with self._process_lock:
+            if self._process is not process:
+                return
+        if process.poll() is None:
             process.terminate()
 
     def _record_error(self, error: Exception) -> None:
