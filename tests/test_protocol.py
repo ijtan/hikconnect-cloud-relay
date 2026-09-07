@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 import queue
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import sys
 import types
 import unittest
@@ -28,6 +28,17 @@ class ProtocolTests(unittest.TestCase):
         packet = bytes.fromhex("8060000100000e1001020304") + b"payload"
         self.assertEqual(vtm.rtp_payload(packet), b"payload")
         self.assertEqual(vtm.rtp_timestamp(packet), 3600)
+
+    def test_vtm_keepalive_runs_independently_of_packet_reads(self) -> None:
+        client = vtm.VtmStreamClient("ysproto://stream.example.test:8554/live")
+        client.stream_session = "session"
+        stop_event = Mock()
+        stop_event.wait.side_effect = [False, True]
+        with patch.object(client, "_send") as send:
+            client._keepalive_loop(stop_event)
+        send.assert_called_once_with(
+            vtm._keepalive_request("session"), vtm.MESSAGE, vtm.KEEPALIVE_REQ
+        )
 
     def test_h264_single_and_stap_a(self) -> None:
         depacketizer = relay.H264Depacketizer()

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import socket
-import time
+import threading
 from typing import Iterator
 from urllib.parse import parse_qsl, urlparse
 
@@ -136,6 +136,7 @@ class VtmStreamClient:
         self.stream_session: str | None = None
         self._socket: socket.socket | None = None
         self._sequence = 0
+        self._send_lock = threading.Lock()
 
     def connect(self) -> None:
         parsed = urlparse(self.stream_url)
@@ -145,7 +146,8 @@ class VtmStreamClient:
         self._socket.settimeout(self.timeout)
 
     def close(self) -> None:
-        sock, self._socket = self._socket, None
+        with self._send_lock:
+            sock, self._socket = self._socket, None
         if sock is not None:
             try:
                 sock.shutdown(socket.SHUT_RDWR)
@@ -154,11 +156,22 @@ class VtmStreamClient:
             sock.close()
 
     def _send(self, body: bytes, channel: int, code: int) -> None:
-        if self._socket is None:
-            raise VtmError("VTM socket is not connected")
-        packet = _packet(body, channel, code, self._sequence)
-        self._sequence = (self._sequence + 1) & 0xFFFF
-        self._socket.sendall(packet)
+        with self._send_lock:
+            if self._socket is None:
+                raise VtmError("VTM socket is not connected")
+            packet = _packet(body, channel, code, self._sequence)
+            self._sequence = (self._sequence + 1) & 0xFFFF
+            self._socket.sendall(packet)
+
+    def _keepalive_loop(self, stop_event: threading.Event) -> None:
+        while not stop_event.wait(5.0):
+            if not self.stream_session:
+                continue
+            try:
+                self._send(_keepalive_request(self.stream_session), MESSAGE, KEEPALIVE_REQ)
+            except (OSError, VtmError):
+                self.close()
+                return
 
     def _read_exact(self, length: int) -> bytes:
         if self._socket is None:
@@ -216,19 +229,26 @@ class VtmStreamClient:
         raise VtmError("timed out waiting for VTM stream info")
 
     def iter_packets(self) -> Iterator[VtmPacket]:
-        last_keepalive = time.monotonic()
-        while self._socket is not None:
-            if self.stream_session and time.monotonic() - last_keepalive >= 5:
-                self._send(_keepalive_request(self.stream_session), MESSAGE, KEEPALIVE_REQ)
-                last_keepalive = time.monotonic()
-            packet = self._read_packet()
-            if packet.message_code == KEEPALIVE_REQ:
-                if self.stream_session:
-                    self._send(_keepalive_request(self.stream_session), MESSAGE, KEEPALIVE_RSP)
-                last_keepalive = time.monotonic()
-                continue
-            if packet.channel in (STREAM, ENCRYPTED_STREAM):
-                yield packet
+        keepalive_stop = threading.Event()
+        keepalive_thread = threading.Thread(
+            target=self._keepalive_loop,
+            args=(keepalive_stop,),
+            name="hikvision-vtm-keepalive",
+            daemon=True,
+        )
+        keepalive_thread.start()
+        try:
+            while self._socket is not None:
+                packet = self._read_packet()
+                if packet.message_code == KEEPALIVE_REQ:
+                    if self.stream_session:
+                        self._send(_keepalive_request(self.stream_session), MESSAGE, KEEPALIVE_RSP)
+                    continue
+                if packet.channel in (STREAM, ENCRYPTED_STREAM):
+                    yield packet
+        finally:
+            keepalive_stop.set()
+            keepalive_thread.join(timeout=1.0)
 
 
 def rtp_payload(data: bytes) -> bytes:
