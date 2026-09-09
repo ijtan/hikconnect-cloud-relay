@@ -351,7 +351,10 @@ class RtspCopyPublisher:
                 self._dropped_bytes += len(chunk)
             self._set_status("waiting_for_keyframe")
             return
+        was_streaming = self.status == "streaming"
         self._set_status("streaming")
+        if not was_streaming:
+            _LOGGER.info("H.264 RTSP publisher accepted its first decodable access unit")
 
     def stats(self) -> dict[str, object]:
         with self._state_lock:
@@ -415,6 +418,7 @@ class RtspCopyPublisher:
         )
         with self._process_lock:
             self._process = process
+        _LOGGER.info("H.264 RTSP publisher process started (pid=%s)", process.pid)
         if process.stderr is not None:
             threading.Thread(
                 target=self._drain_stderr,

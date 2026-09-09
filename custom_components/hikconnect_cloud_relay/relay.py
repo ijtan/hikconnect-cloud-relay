@@ -23,6 +23,12 @@ _LOGGER = logging.getLogger(__name__)
 _MEDIA_IDLE_TIMEOUT = 20.0
 
 
+def _retry_delay_for_reason(reason: str, backoff: float) -> float:
+    """Retry media-expiry disconnects immediately; back off other failures."""
+
+    return 0.0 if reason == "media_idle" else backoff
+
+
 class H264Depacketizer:
     """Reassemble RFC 6184 single-NAL, STAP-A and FU-A packets."""
 
@@ -245,6 +251,11 @@ class CloudRelay:
         self._mpegts_bytes = 0
         self._started_at = time.monotonic()
         self._last_rtp_at = self._started_at
+        self._last_disconnect_reason: str | None = None
+        self._last_reconnect_duration: float | None = None
+        self._last_session_duration: float | None = None
+        self._last_reconnect_phases: dict[str, float] = {}
+        self._recovery_started_at: float | None = None
         self._active_lock = threading.Lock()
         self._active_stream = None
         self._thread = threading.Thread(target=self._run, name="hikvision-vtm", daemon=True)
@@ -258,6 +269,18 @@ class CloudRelay:
         with self._state_lock:
             self._status = status
             self._error = error
+
+    def _set_disconnect_reason(self, reason: str) -> None:
+        with self._state_lock:
+            self._last_disconnect_reason = reason
+
+    def _get_disconnect_reason(self) -> str | None:
+        with self._state_lock:
+            return self._last_disconnect_reason
+
+    def _record_phase(self, name: str, started_at: float) -> None:
+        with self._metrics_lock:
+            self._last_reconnect_phases[name] = round(time.monotonic() - started_at, 1)
 
     def start(self) -> None:
         if self._manages_rtsp_server and self._rtsp_server_storage is not None:
@@ -349,6 +372,7 @@ class CloudRelay:
     def stats(self) -> dict[str, object]:
         with self._state_lock:
             status, error = self._status, self._error
+            disconnect_reason = self._last_disconnect_reason
         with self._metrics_lock:
             values = {
                 "rtp_packets": self._rtp_packets,
@@ -359,12 +383,16 @@ class CloudRelay:
                 "jpeg_bytes": self._jpeg_bytes,
                 "mpegts_chunks": self._mpegts_chunks,
                 "mpegts_bytes": self._mpegts_bytes,
+                "last_reconnect_duration_seconds": self._last_reconnect_duration,
+                "last_session_duration_seconds": self._last_session_duration,
+                "last_reconnect_phases": dict(self._last_reconnect_phases),
             }
         values.update(
             {
                 "status": status,
                 "healthy": self.healthy,
                 "error": error,
+                "last_disconnect_reason": disconnect_reason,
                 "serial": self.serial,
                 "channel": self.channel,
                 "stream_type": self.stream_type,
@@ -401,20 +429,49 @@ class CloudRelay:
     def _run(self) -> None:
         retry_delay = 2.0
         while not self.stop_event.is_set():
+            attempt = self._reconnect_attempt + 1
+            attempt_started = time.monotonic()
+            self._set_disconnect_reason("starting")
+            with self._metrics_lock:
+                self._last_reconnect_phases = {}
+            _LOGGER.info("Hikvision relay reconnect attempt %s starting", attempt)
             try:
                 self._run_once()
             except Exception as exc:  # noqa: BLE001
                 if self.stop_event.is_set():
                     break
+                session_elapsed = time.monotonic() - attempt_started
+                reason = self._get_disconnect_reason() or type(exc).__name__
                 self._set_state("error", f"{type(exc).__name__}: {str(exc)[:300]}")
-                _LOGGER.warning("Hikvision cloud relay stopped: %s", self._error)
+                with self._metrics_lock:
+                    self._last_session_duration = round(session_elapsed, 1)
+                    if self._recovery_started_at is None:
+                        self._recovery_started_at = time.monotonic()
+                    phases = dict(self._last_reconnect_phases)
                 self._reconnect_attempt += 1
-                delay = retry_delay
+                phase_summary = ", ".join(
+                    f"{name}={duration:.1f}s" for name, duration in phases.items()
+                ) or "none"
+                delay = _retry_delay_for_reason(reason, retry_delay)
                 retry_delay = min(retry_delay * 2, 120.0)
+                _LOGGER.warning(
+                    "Hikvision cloud relay session ended after %.1fs phase=%s: %s; "
+                    "phases=[%s]; retrying in %.1fs (attempt #%s)",
+                    session_elapsed,
+                    reason,
+                    self._error,
+                    phase_summary,
+                    delay,
+                    self._reconnect_attempt + 1,
+                )
             else:
+                session_elapsed = time.monotonic() - attempt_started
+                with self._metrics_lock:
+                    self._last_session_duration = round(session_elapsed, 1)
                 self._reconnect_attempt = 0
                 delay = 2.0
                 retry_delay = 2.0
+                _LOGGER.info("Hikvision relay attempt completed after %.1fs", session_elapsed)
             self._next_retry_at = time.monotonic() + delay
             if self.stop_event.wait(delay):
                 break
@@ -422,6 +479,7 @@ class CloudRelay:
             self._set_state("reconnecting")
 
     def _run_once(self) -> None:
+        attempt_started = time.monotonic()
         if self._rtsp is not None:
             self._rtsp.reset()
         client = HikConnectClient(self.username, self.password, self.api_host)
@@ -433,13 +491,36 @@ class CloudRelay:
         mpegts_output: BinaryIO | None = None
         mpegts_thread: threading.Thread | None = None
         try:
+            self._set_disconnect_reason("login")
+            phase_started = time.monotonic()
+            _LOGGER.info("Hikvision cloud login starting")
             client.login()
+            self._record_phase("login", phase_started)
+            _LOGGER.info(
+                "Hikvision cloud login completed in %.1fs",
+                time.monotonic() - phase_started,
+            )
+            self._set_disconnect_reason("vtm_endpoint")
+            phase_started = time.monotonic()
             stream = client.open_vtm_stream(
                 self.serial, self.channel, self.stream_type, timeout=10.0
             )
+            self._record_phase("vtm_endpoint", phase_started)
+            _LOGGER.info(
+                "Hikvision VTM endpoint prepared in %.1fs",
+                time.monotonic() - phase_started,
+            )
             with self._active_lock:
                 self._active_stream = stream
+            self._set_disconnect_reason("vtm_negotiation")
+            phase_started = time.monotonic()
             info = stream.start()
+            self._record_phase("vtm_negotiation", phase_started)
+            _LOGGER.info(
+                "Hikvision VTM stream negotiated in %.1fs result=%s",
+                time.monotonic() - phase_started,
+                info.result,
+            )
             _LOGGER.debug(
                 "Hikvision VTM stream up serial=%s channel=%s result=%s",
                 self.serial, self.channel, info.result
@@ -469,6 +550,9 @@ class CloudRelay:
                     with self._metrics_lock:
                         idle_seconds = time.monotonic() - self._last_rtp_at
                     if idle_seconds >= _MEDIA_IDLE_TIMEOUT:
+                        self._set_disconnect_reason("media_idle")
+                        with self._metrics_lock:
+                            self._recovery_started_at = time.monotonic()
                         _LOGGER.warning(
                             "Hikvision VTM media idle for %.1fs; reconnecting", idle_seconds
                         )
@@ -483,9 +567,11 @@ class CloudRelay:
             media_watchdog_thread.start()
             decoder = H264Depacketizer()
             parameter_sets = H264ParameterSetInjector()
+            self._set_disconnect_reason("waiting_for_rtp")
             self._set_state("streaming")
             with self._metrics_lock:
                 self._last_rtp_timestamp = None
+            first_rtp = True
             stdin = process.stdin if process is not None else None
             if process is not None and stdin is None:
                 raise RuntimeError("FFmpeg stdin is unavailable")
@@ -493,6 +579,29 @@ class CloudRelay:
                 if self.stop_event.is_set():
                     break
                 self.note_rtp()
+                if first_rtp:
+                    first_rtp = False
+                    self._set_disconnect_reason("streaming")
+                    self._record_phase("first_rtp", attempt_started)
+                    with self._metrics_lock:
+                        recovery_started_at = self._recovery_started_at
+                        if recovery_started_at is not None:
+                            self._last_reconnect_duration = round(
+                                time.monotonic() - recovery_started_at, 1
+                            )
+                            self._recovery_started_at = None
+                        else:
+                            recovery_duration = None
+                    if recovery_started_at is not None:
+                        recovery_duration = self._last_reconnect_duration
+                        _LOGGER.warning(
+                            "Hikvision media recovery received first RTP in %.1fs",
+                            recovery_duration,
+                        )
+                    _LOGGER.info(
+                        "Hikvision first RTP packet received %.1fs after reconnect start",
+                        time.monotonic() - attempt_started,
+                    )
                 payload = rtp_payload(packet.body)
                 if not payload:
                     continue

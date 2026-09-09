@@ -40,6 +40,19 @@ class ProtocolTests(unittest.TestCase):
             vtm._keepalive_request("session"), vtm.MESSAGE, vtm.KEEPALIVE_REQ
         )
 
+    def test_vtm_startup_has_a_total_deadline(self) -> None:
+        client = vtm.VtmStreamClient(
+            "ysproto://stream.example.test:8554/live",
+            startup_timeout=30.0,
+        )
+        with (
+            patch.object(vtm.time, "monotonic", side_effect=[0.0, 31.0]),
+            patch.object(client, "connect") as connect,
+        ):
+            with self.assertRaisesRegex(vtm.VtmError, "after 30.0s"):
+                client.start()
+        connect.assert_not_called()
+
     def test_h264_single_and_stap_a(self) -> None:
         depacketizer = relay.H264Depacketizer()
         self.assertEqual(list(depacketizer.feed(b"\x65abc")), [b"\x65abc"])
@@ -220,6 +233,10 @@ class ProtocolTests(unittest.TestCase):
         )
         with patch.object(relay.time, "monotonic", return_value=cloud_relay._started_at + 4):
             self.assertEqual(cloud_relay.stats()["rtp_idle_seconds"], 4)
+
+    def test_media_idle_retries_immediately(self) -> None:
+        self.assertEqual(relay._retry_delay_for_reason("media_idle", 120.0), 0.0)
+        self.assertEqual(relay._retry_delay_for_reason("login", 120.0), 120.0)
 
     def test_rtsp_health_requires_publisher_ready(self) -> None:
         cloud_relay = relay.CloudRelay(

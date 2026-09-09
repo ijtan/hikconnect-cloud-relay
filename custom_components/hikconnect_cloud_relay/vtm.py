@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import socket
 import threading
+import time
 from typing import Iterator
 from urllib.parse import parse_qsl, urlparse
 
@@ -16,6 +17,7 @@ KEEPALIVE_REQ = 0x132
 KEEPALIVE_RSP = 0x133
 STREAMINFO_REQ = 0x13B
 STREAMINFO_RSP = 0x13C
+VTM_STARTUP_TIMEOUT = 30.0
 
 
 class VtmError(RuntimeError):
@@ -130,20 +132,29 @@ def _packet(body: bytes, channel: int, code: int, sequence: int) -> bytes:
 class VtmStreamClient:
     """Synchronous VTM client used from the relay worker thread."""
 
-    def __init__(self, stream_url: str, timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        stream_url: str,
+        timeout: float = 10.0,
+        startup_timeout: float = VTM_STARTUP_TIMEOUT,
+    ) -> None:
+        if timeout <= 0 or startup_timeout <= 0:
+            raise ValueError("VTM timeouts must be positive")
         self.stream_url = stream_url
         self.timeout = timeout
+        self.startup_timeout = startup_timeout
         self.stream_session: str | None = None
         self._socket: socket.socket | None = None
         self._sequence = 0
         self._send_lock = threading.Lock()
 
-    def connect(self) -> None:
+    def connect(self, timeout: float | None = None) -> None:
         parsed = urlparse(self.stream_url)
         if parsed.scheme != "ysproto" or not parsed.hostname or parsed.port is None:
             raise VtmError("invalid VTM URL")
-        self._socket = socket.create_connection((parsed.hostname, parsed.port), self.timeout)
-        self._socket.settimeout(self.timeout)
+        connect_timeout = min(self.timeout, timeout) if timeout is not None else self.timeout
+        self._socket = socket.create_connection((parsed.hostname, parsed.port), connect_timeout)
+        self._socket.settimeout(connect_timeout)
 
     def close(self) -> None:
         with self._send_lock:
@@ -173,19 +184,24 @@ class VtmStreamClient:
                 self.close()
                 return
 
-    def _read_exact(self, length: int) -> bytes:
+    def _read_exact(self, length: int, deadline: float | None = None) -> bytes:
         if self._socket is None:
             raise VtmError("VTM socket is not connected")
         result = bytearray()
         while len(result) < length:
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise socket.timeout("VTM startup deadline exceeded")
+                self._socket.settimeout(min(self.timeout, remaining))
             chunk = self._socket.recv(length - len(result))
             if not chunk:
                 raise VtmError("VTM socket closed")
             result.extend(chunk)
         return bytes(result)
 
-    def _read_packet(self) -> VtmPacket:
-        header = self._read_exact(8)
+    def _read_packet(self, deadline: float | None = None) -> VtmPacket:
+        header = self._read_exact(8, deadline)
         if header[0] != VTM_MAGIC:
             raise VtmError("invalid VTM packet magic")
         length = int.from_bytes(header[2:4], "big")
@@ -193,17 +209,35 @@ class VtmStreamClient:
             channel=header[1],
             sequence=int.from_bytes(header[4:6], "big"),
             message_code=int.from_bytes(header[6:8], "big"),
-            body=self._read_exact(length),
+            body=self._read_exact(length, deadline),
         )
 
     def start(self) -> StreamInfo:
+        deadline = time.monotonic() + self.startup_timeout
         redirect_key: str | None = None
         for _ in range(4):
-            self.connect()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise VtmError(
+                    f"timed out waiting for VTM stream info after {self.startup_timeout:.1f}s"
+                )
+            self.connect(remaining)
             self._send(_stream_info_request(self.stream_url, redirect_key), MESSAGE, STREAMINFO_REQ)
             redirected = False
             for _ in range(20):
-                packet = self._read_packet()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self.close()
+                    raise VtmError(
+                        f"timed out waiting for VTM stream info after {self.startup_timeout:.1f}s"
+                    )
+                try:
+                    packet = self._read_packet(deadline)
+                except socket.timeout as exc:
+                    self.close()
+                    raise VtmError(
+                        f"timed out waiting for VTM stream info after {self.startup_timeout:.1f}s"
+                    ) from exc
                 if packet.message_code != STREAMINFO_RSP:
                     continue
                 values = _fields(packet.body)
@@ -226,7 +260,9 @@ class VtmStreamClient:
             self.close()
             if redirected:
                 continue
-        raise VtmError("timed out waiting for VTM stream info")
+        raise VtmError(
+            f"timed out waiting for VTM stream info after {self.startup_timeout:.1f}s"
+        )
 
     def iter_packets(self) -> Iterator[VtmPacket]:
         keepalive_stop = threading.Event()
