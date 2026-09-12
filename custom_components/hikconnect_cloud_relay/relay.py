@@ -20,7 +20,8 @@ from .rtsp import RtspCopyPublisher, uses_managed_local_server
 from .vtm import rtp_payload, rtp_timestamp
 
 _LOGGER = logging.getLogger(__name__)
-_MEDIA_IDLE_TIMEOUT = 20.0
+_MEDIA_IDLE_TIMEOUT = 10.0
+_INITIAL_MEDIA_TIMEOUT = 20.0
 
 
 def _retry_delay_for_reason(reason: str, backoff: float) -> float:
@@ -415,6 +416,7 @@ class CloudRelay:
                 "rtsp_dropped_bytes": rtsp_stats["dropped_bytes"] if rtsp_stats else 0,
                 "rtsp_queued_bytes": rtsp_stats["queued_bytes"] if rtsp_stats else 0,
                 "rtsp_last_error": rtsp_stats["last_error"] if rtsp_stats else None,
+                "rtsp_startup_seconds": rtsp_stats["startup_seconds"] if rtsp_stats else None,
                 "rtsp_server_enabled": self._manages_rtsp_server,
                 "rtsp_server_status": (
                     self._rtsp_server.status if self._rtsp_server is not None else "external"
@@ -452,8 +454,13 @@ class CloudRelay:
                 phase_summary = ", ".join(
                     f"{name}={duration:.1f}s" for name, duration in phases.items()
                 ) or "none"
+                # A long, media-producing session is a success, even if it
+                # eventually exits via an exception rather than returning.
+                if "first_rtp" in phases and session_elapsed - phases["first_rtp"] >= 60.0:
+                    retry_delay = 2.0
                 delay = _retry_delay_for_reason(reason, retry_delay)
-                retry_delay = min(retry_delay * 2, 120.0)
+                if delay > 0:
+                    retry_delay = min(retry_delay * 2, 120.0)
                 _LOGGER.warning(
                     "Hikvision cloud relay session ended after %.1fs phase=%s: %s; "
                     "phases=[%s]; retrying in %.1fs (attempt #%s)",
@@ -477,6 +484,27 @@ class CloudRelay:
                 break
             self._next_retry_at = 0.0
             self._set_state("reconnecting")
+
+    def _watch_media_idle(
+        self, stream, stop_event: threading.Event, received_rtp: threading.Event
+    ) -> None:
+        """Recover stalled media quickly while allowing a longer cold start."""
+
+        while not stop_event.wait(1.0):
+            with self._metrics_lock:
+                idle_seconds = time.monotonic() - self._last_rtp_at
+            had_media = received_rtp.is_set()
+            idle_limit = _MEDIA_IDLE_TIMEOUT if had_media else _INITIAL_MEDIA_TIMEOUT
+            if idle_seconds >= idle_limit:
+                self._set_disconnect_reason("media_idle" if had_media else "waiting_for_rtp")
+                with self._metrics_lock:
+                    if self._recovery_started_at is None:
+                        self._recovery_started_at = time.monotonic()
+                _LOGGER.warning(
+                    "Hikvision VTM media idle for %.1fs; reconnecting", idle_seconds
+                )
+                stream.close()
+                return
 
     def _run_once(self) -> None:
         attempt_started = time.monotonic()
@@ -544,23 +572,10 @@ class CloudRelay:
             with self._metrics_lock:
                 self._last_rtp_at = time.monotonic()
             media_watchdog_stop = threading.Event()
-
-            def stop_idle_stream() -> None:
-                while not media_watchdog_stop.wait(2.0):
-                    with self._metrics_lock:
-                        idle_seconds = time.monotonic() - self._last_rtp_at
-                    if idle_seconds >= _MEDIA_IDLE_TIMEOUT:
-                        self._set_disconnect_reason("media_idle")
-                        with self._metrics_lock:
-                            self._recovery_started_at = time.monotonic()
-                        _LOGGER.warning(
-                            "Hikvision VTM media idle for %.1fs; reconnecting", idle_seconds
-                        )
-                        stream.close()
-                        return
-
+            received_rtp = threading.Event()
             media_watchdog_thread = threading.Thread(
-                target=stop_idle_stream,
+                target=self._watch_media_idle,
+                args=(stream, media_watchdog_stop, received_rtp),
                 name="hikvision-vtm-media-watchdog",
                 daemon=True,
             )
@@ -581,6 +596,7 @@ class CloudRelay:
                 self.note_rtp()
                 if first_rtp:
                     first_rtp = False
+                    received_rtp.set()
                     self._set_disconnect_reason("streaming")
                     self._record_phase("first_rtp", attempt_started)
                     with self._metrics_lock:

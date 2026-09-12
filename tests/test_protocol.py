@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 import queue
+import threading
 from unittest.mock import Mock, patch
 import sys
 import types
@@ -179,6 +180,7 @@ class ProtocolTests(unittest.TestCase):
             patch.object(rtsp, "rtsp_path_is_ready", return_value=False),
             patch.object(publisher, "_terminate_process") as terminate,
         ):
+            publisher._first_input_at = 0.0
             publisher._set_status("streaming")
             publisher._watch_process(process)
         terminate.assert_called_once_with(process)
@@ -238,6 +240,31 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(relay._retry_delay_for_reason("media_idle", 120.0), 0.0)
         self.assertEqual(relay._retry_delay_for_reason("login", 120.0), 120.0)
 
+    def test_media_watchdog_distinguishes_expiry_from_cold_start(self) -> None:
+        for received, idle, expected_reason in [
+            (True, 9.0, None),
+            (True, 10.0, "media_idle"),
+            (False, 15.0, None),
+            (False, 20.0, "waiting_for_rtp"),
+        ]:
+            with self.subTest(received=received, idle=idle):
+                cloud_relay = relay.CloudRelay(
+                    "user", "password", "https://api.example.test", "station", 1, 1, 0, 5
+                )
+                stream, stop = Mock(), Mock()
+                stop.wait.side_effect = [False, True]
+                received_rtp = threading.Event()
+                if received:
+                    received_rtp.set()
+                with patch.object(
+                    relay.time, "monotonic", return_value=cloud_relay._last_rtp_at + idle
+                ):
+                    cloud_relay._watch_media_idle(stream, stop, received_rtp)
+                self.assertEqual(cloud_relay._get_disconnect_reason(), expected_reason)
+                self.assertEqual(stream.close.call_count, int(expected_reason is not None))
+                if expected_reason == "waiting_for_rtp":
+                    self.assertEqual(relay._retry_delay_for_reason(expected_reason, 4.0), 4.0)
+
     def test_rtsp_health_requires_publisher_ready(self) -> None:
         cloud_relay = relay.CloudRelay(
             username="user",
@@ -277,6 +304,112 @@ class ProtocolTests(unittest.TestCase):
         stats = publisher.stats()
         self.assertEqual(stats["dropped_chunks"], 1)
         self.assertEqual(stats["queued_bytes"], 0)
+
+    def test_queued_keyframe_is_not_rtsp_readiness(self) -> None:
+        publisher = rtsp.RtspCopyPublisher("rtsp://127.0.0.1:8554/test")
+        publisher.submit([b"\x67sps", b"\x68pps", b"\x65idr"])
+        self.assertEqual(publisher.status, "publishing")
+        process = Mock()
+        process.poll.return_value = None
+        publisher._first_input_at = 100.0
+        with (
+            patch.object(rtsp.time, "monotonic", return_value=102.0),
+            patch.object(rtsp, "rtsp_path_is_ready", return_value=True),
+            patch.object(publisher._stop_event, "wait", return_value=True),
+        ):
+            publisher._watch_process(process)
+        self.assertEqual(publisher.status, "streaming")
+        self.assertEqual(publisher.stats()["startup_seconds"], 2.0)
+
+    def test_rtsp_reset_signal_survives_forwarding(self) -> None:
+        publisher = rtsp.RtspCopyPublisher("rtsp://127.0.0.1:8554/test")
+        publisher._restart_event.set()
+        publisher._forward_to_process(Mock())
+        self.assertTrue(publisher._restart_event.is_set())
+
+    def test_rtsp_reset_interrupts_failure_backoff(self) -> None:
+        publisher = rtsp.RtspCopyPublisher("rtsp://127.0.0.1:8554/test")
+        waits = []
+
+        def wait(delay):
+            waits.append(delay)
+            if len(waits) == 2:
+                publisher.reset()
+            elif len(waits) == 3:
+                publisher._stop_event.set()
+
+        with (
+            patch.object(publisher, "_start_process", side_effect=OSError("unavailable")),
+            patch.object(publisher._restart_event, "wait", side_effect=wait),
+        ):
+            publisher._run()
+        self.assertEqual(waits, [2.0, 4.0, 2.0])
+
+    def test_stable_publisher_resets_failure_backoff(self) -> None:
+        publisher = rtsp.RtspCopyPublisher("rtsp://127.0.0.1:8554/test")
+        waits = []
+        runs = 0
+
+        def forward(_process):
+            nonlocal runs
+            runs += 1
+            if runs == 3:
+                publisher._ready_at = 100.0
+
+        def wait(delay):
+            waits.append(delay)
+            if len(waits) == 3:
+                publisher._stop_event.set()
+
+        with (
+            patch.object(publisher, "_start_process", return_value=Mock()),
+            patch.object(publisher, "_forward_to_process", side_effect=forward),
+            patch.object(publisher, "_cleanup_process"),
+            patch.object(rtsp.time, "monotonic", return_value=200.0),
+            patch.object(publisher._restart_event, "wait", side_effect=wait),
+        ):
+            publisher._run()
+        self.assertEqual(waits, [2.0, 4.0, 2.0])
+
+    def test_publisher_cleanup_reaps_before_flushing_stdin(self) -> None:
+        publisher = rtsp.RtspCopyPublisher("rtsp://127.0.0.1:8554/test")
+        process = Mock()
+        process.poll.return_value = None
+        publisher._cleanup_process(process)
+        calls = [call[0] for call in process.mock_calls]
+        self.assertLess(calls.index("wait"), calls.index("stdin.close"))
+
+    def test_cloud_backoff_resets_only_after_media_success(self) -> None:
+        cloud_relay = relay.CloudRelay(
+            "user", "password", "https://api.example.test", "station", 1, 1, 0, 5
+        )
+        waits = []
+        attempt = 0
+
+        def run_once():
+            nonlocal attempt
+            attempt += 1
+            cloud_relay._set_disconnect_reason("login")
+            if attempt == 3:
+                cloud_relay._last_reconnect_phases["first_rtp"] = 1.0
+                cloud_relay._set_disconnect_reason("streaming")
+            if attempt == 4:
+                cloud_relay._set_disconnect_reason("media_idle")
+            raise OSError("closed")
+
+        def wait(delay):
+            waits.append(delay)
+            return len(waits) == 5
+
+        # All attempts take >60s, but only one actually received media.
+        clock = iter(range(0, 100000, 100))
+        with (
+            patch.object(cloud_relay, "_run_once", side_effect=run_once),
+            patch.object(cloud_relay.stop_event, "wait", side_effect=wait),
+            patch.object(relay.time, "monotonic", side_effect=lambda: next(clock)),
+        ):
+            cloud_relay._run()
+        self.assertEqual(waits, [2.0, 4.0, 2.0, 0.0, 4.0])
 
 
 if __name__ == "__main__":

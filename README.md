@@ -202,6 +202,43 @@ boundaries.
 
 </details>
 
+## Recording recovery and diagnostics
+
+For cloud media expiry, `0.1.19` retries immediately after the RTP-idle watchdog
+detects the failure. Login and startup failures still use bounded backoff.
+In `0.1.20`, a sustained successful stream resets that failure backoff; publisher
+resets also interrupt a pending output retry instead of waiting up to 30 seconds.
+Established media is considered stalled after 10 seconds of RTP silence, checked
+once per second. A cold start still allows 20 seconds for its first RTP packet;
+never receiving media is a startup failure and retains backoff, rather than
+being treated as normal session expiry.
+
+For the managed local RTSP server, `rtsp_status: publishing` means decodable
+input is queued but the RTSP path is not yet confirmed. `streaming` requires a
+successful RTSP DESCRIBE. `rtsp_startup_seconds` measures first forwarded input
+to the first successful readiness probe (approximately one-second resolution).
+External publishers without a managed-path probe report successful forwarding
+instead; this is not an end-to-end recording guarantee.
+
+Measure the actual retained recordings, rather than treating process uptime or
+RTP recovery time as continuous recording coverage:
+
+```bash
+python3 examples/recording_gap_report.py --camera front_door --hours 12 --minimum-gap 1
+```
+
+Run this on the Docker host (`--container` defaults to `frigate`). It reads the
+container-local Frigate API, merges overlapping segments, and reports recording
+coverage, gaps, and missing edges separately. Small gaps still reduce coverage
+even when filtered from the displayed list. Retention rules can remove old
+recordings; use a window inside continuous retention. Recent segments can still
+be awaiting finalization, so the trailing edge is not automatically an outage.
+
+Frigate's camera-level `ffmpeg.retry_interval` defaults to 10 seconds in 0.17.2.
+After measuring a relay-only upgrade, a value of 2 seconds can reduce the next
+consumer reconnect wait. This also increases attempts during a sustained outage.
+Keep recording in copy mode; detection FPS does not reduce recording FPS.
+
 ## Current limitations
 
 - RTSP-only mode owns a local MediaMTX server on port `8554` by default; use a

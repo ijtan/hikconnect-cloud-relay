@@ -20,6 +20,7 @@ _MAX_RETRY_DELAY = 30.0
 _RTSP_PROBE_INTERVAL = 5.0
 _RTSP_PROBE_GRACE_PERIOD = 10.0
 _RTSP_PROBE_FAILURE_LIMIT = 2
+_STABLE_PUBLISH_SECONDS = 30.0
 RTSP_DEFAULT_HOST = "127.0.0.1"
 RTSP_DEFAULT_PORT = 8554
 
@@ -270,11 +271,14 @@ class RtspCopyPublisher:
         self._queue = _ByteQueue(max_queue_bytes)
         self._probe_url = self.publish_url if uses_managed_local_server(self.publish_url) else None
         self._gate = H264CopyGate()
+        self._input_lock = threading.Lock()
         self._stop_event = threading.Event()
         self._restart_event = threading.Event()
         self._state_lock = threading.Lock()
         self._status = "stopped"
         self._last_error: str | None = None
+        self._first_input_at: float | None = None
+        self._ready_at: float | None = None
         self._metrics_lock = threading.Lock()
         self._restarts = 0
         self._dropped_chunks = 0
@@ -307,8 +311,9 @@ class RtspCopyPublisher:
                 daemon=True,
             )
             thread = self._thread
-        self._gate.reset(clear_parameter_sets=True)
-        self._queue.clear()
+        with self._input_lock:
+            self._gate.reset(clear_parameter_sets=True)
+            self._queue.clear()
         thread.start()
 
     def stop(self) -> None:
@@ -327,8 +332,9 @@ class RtspCopyPublisher:
     def reset(self) -> None:
         """Reset the publisher after the cloud source reconnects."""
 
-        self._gate.reset(clear_parameter_sets=True)
-        self._queue.clear()
+        with self._input_lock:
+            self._gate.reset(clear_parameter_sets=True)
+            self._queue.clear()
         self._restart_event.set()
         self._queue.wake()
         self._terminate_active_process()
@@ -336,6 +342,10 @@ class RtspCopyPublisher:
     def submit(self, nals: list[bytes]) -> None:
         """Submit NALs without blocking the VTM reader thread."""
 
+        with self._input_lock:
+            self._submit_locked(nals)
+
+    def _submit_locked(self, nals: list[bytes]) -> None:
         if self._stop_event.is_set():
             return
         ready = self._gate.feed(nals)
@@ -351,14 +361,15 @@ class RtspCopyPublisher:
                 self._dropped_bytes += len(chunk)
             self._set_status("waiting_for_keyframe")
             return
-        was_streaming = self.status == "streaming"
-        self._set_status("streaming")
-        if not was_streaming:
+        if self.status not in {"publishing", "streaming"}:
+            self._set_status("publishing")
             _LOGGER.info("H.264 RTSP publisher accepted its first decodable access unit")
 
     def stats(self) -> dict[str, object]:
         with self._state_lock:
             status = self._status
+            first_input_at = self._first_input_at
+            ready_at = self._ready_at
         with self._metrics_lock:
             restarts = self._restarts
             dropped_chunks = self._dropped_chunks
@@ -372,40 +383,64 @@ class RtspCopyPublisher:
             "dropped_bytes": dropped_bytes,
             "queued_bytes": self._queue.bytes,
             "last_error": last_error,
+            "startup_seconds": (
+                round(ready_at - first_input_at, 1)
+                if ready_at is not None and first_input_at is not None else None
+            ),
         }
 
     def _run(self) -> None:
         retry_delay = 2.0
         while not self._stop_event.is_set():
+            with self._state_lock:
+                self._first_input_at = None
+                self._ready_at = None
             try:
                 process = self._start_process()
             except Exception as exc:  # noqa: BLE001
                 self._record_error(exc)
                 self._set_status("error")
                 self._note_restart()
-                self._gate.reset(clear_parameter_sets=False)
-                if self._stop_event.wait(retry_delay):
+                with self._input_lock:
+                    self._gate.reset(clear_parameter_sets=False)
+                    self._queue.clear()
+                self._restart_event.wait(retry_delay)
+                if self._stop_event.is_set():
                     break
-                retry_delay = min(retry_delay * 2, _MAX_RETRY_DELAY)
+                if self._restart_event.is_set():
+                    self._restart_event.clear()
+                    retry_delay = 2.0
+                else:
+                    retry_delay = min(retry_delay * 2, _MAX_RETRY_DELAY)
                 continue
 
             self._set_status("waiting_for_keyframe")
             self._forward_to_process(process)
+            with self._state_lock:
+                ready_at = self._ready_at
+            if ready_at is not None and time.monotonic() - ready_at >= _STABLE_PUBLISH_SECONDS:
+                retry_delay = 2.0
             self._cleanup_process(process)
             if self._stop_event.is_set():
                 break
 
             self._note_restart()
-            self._gate.reset(clear_parameter_sets=False)
-            self._queue.clear()
+            with self._input_lock:
+                self._gate.reset(clear_parameter_sets=False)
+                self._queue.clear()
             self._set_status("reconnecting")
             if self._restart_event.is_set():
                 self._restart_event.clear()
                 retry_delay = 2.0
                 continue
-            if self._stop_event.wait(retry_delay):
+            self._restart_event.wait(retry_delay)
+            if self._stop_event.is_set():
                 break
-            retry_delay = min(retry_delay * 2, _MAX_RETRY_DELAY)
+            if self._restart_event.is_set():
+                self._restart_event.clear()
+                retry_delay = 2.0
+            else:
+                retry_delay = min(retry_delay * 2, _MAX_RETRY_DELAY)
 
     def _start_process(self) -> subprocess.Popen[bytes]:
         ffmpeg = shutil.which(self._ffmpeg) or self._ffmpeg
@@ -441,16 +476,20 @@ class RtspCopyPublisher:
             return
         while not self._stop_event.is_set():
             if self._restart_event.is_set():
-                self._restart_event.clear()
                 return
             if process.poll() is not None:
                 return
             chunk = self._queue.get(0.5)
             if chunk is None:
                 continue
+            with self._state_lock:
+                if self._first_input_at is None:
+                    self._first_input_at = time.monotonic()
             try:
                 stdin.write(chunk)
                 stdin.flush()
+                if self._probe_url is None:
+                    self._mark_ready()
             except (BrokenPipeError, OSError) as exc:
                 self._record_error(exc)
                 return
@@ -458,22 +497,24 @@ class RtspCopyPublisher:
     def _watch_process(self, process: subprocess.Popen[bytes]) -> None:
         """Detect a lost publisher even if forwarding blocks on FFmpeg stdin."""
 
-        started_at = time.monotonic()
-        last_probe = started_at
+        last_probe = 0.0
         probe_failures = 0
         while not self._stop_event.is_set() and process.poll() is None:
             now = time.monotonic()
-            if self.status != "streaming":
+            with self._state_lock:
+                first_input_at = self._first_input_at
+                ready_at = self._ready_at
+            if first_input_at is None:
                 probe_failures = 0
             if (
                 self._probe_url is not None
-                and self.status == "streaming"
-                and now - started_at >= _RTSP_PROBE_GRACE_PERIOD
-                and now - last_probe >= _RTSP_PROBE_INTERVAL
+                and first_input_at is not None
+                and now - last_probe >= (1.0 if ready_at is None else _RTSP_PROBE_INTERVAL)
             ):
                 last_probe = now
                 if not rtsp_path_is_ready(self._probe_url):
-                    probe_failures += 1
+                    if now - first_input_at >= _RTSP_PROBE_GRACE_PERIOD:
+                        probe_failures += 1
                     if probe_failures >= _RTSP_PROBE_FAILURE_LIMIT:
                         self._set_status("error")
                         self._record_error(RuntimeError("RTSP publisher path is unavailable"))
@@ -481,8 +522,20 @@ class RtspCopyPublisher:
                         return
                 else:
                     probe_failures = 0
+                    self._mark_ready()
             if self._stop_event.wait(0.5):
                 return
+
+    def _mark_ready(self) -> None:
+        """Report readiness only after output, not merely queued input."""
+
+        with self._state_lock:
+            first_ready = self._ready_at is None
+            if first_ready:
+                self._ready_at = time.monotonic()
+            self._status = "streaming"
+        if first_ready:
+            _LOGGER.info("H.264 RTSP publisher output is ready")
 
     def _drain_stderr(self, stderr: BinaryIO) -> None:
         while True:
@@ -498,11 +551,8 @@ class RtspCopyPublisher:
                     self._last_error = redact_rtsp_text(text)
 
     def _cleanup_process(self, process: subprocess.Popen[bytes]) -> None:
-        if process.stdin is not None:
-            try:
-                process.stdin.close()
-            except OSError:
-                pass
+        # Reap before closing buffered stdin: close() can otherwise flush into
+        # a child that has stopped reading and block the supervisor forever.
         if process.poll() is None:
             process.terminate()
         try:
@@ -510,6 +560,11 @@ class RtspCopyPublisher:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=3)
+        if process.stdin is not None:
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
         if process.stderr is not None:
             try:
                 process.stderr.close()
